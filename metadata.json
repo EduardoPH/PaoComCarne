@@ -1,0 +1,6 @@
+{
+  "name": "Pão com Carne",
+  "description": "Sistema de Recepção da hamburgueria artesanal Pão com Carne: controle de atendimentos, classificação de clientes, fila de espera e relatórios operacionais.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
