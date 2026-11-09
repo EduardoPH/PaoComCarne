@@ -59,21 +59,39 @@ import com.example.ui.theme.StatusAmber
 import com.example.ui.theme.StatusGreen
 import com.example.ui.theme.StatusRed
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+
 @Composable
 fun ShiftScreen(
     viewModel: ReceptionViewModel,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    onShiftClosed: () -> Unit = onLogout
 ) {
+    val uiState by viewModel.uiState.collectAsState()
     val hoster by viewModel.currentHoster.collectAsState()
     val shift by viewModel.currentShift.collectAsState()
     val attendances by viewModel.shiftAttendances.collectAsState()
     val syncState by viewModel.syncState.collectAsState()
     val pendingCount by viewModel.pendingCount.collectAsState()
+    val scrollState = rememberScrollState()
 
     val totalAtt = attendances.size
     val totalPeople = attendances.sumOf { it.attendance.totalMembers }
     val newCount = attendances.sumOf { it.attendance.newMembers }
     val returningCount = attendances.sumOf { it.attendance.returningMembers }
+
+    if (uiState.showCloseShiftDialog && shift != null) {
+        CloseShiftDialog(
+            shift = shift!!,
+            totalAttendances = totalAtt,
+            totalPeople = totalPeople,
+            newClients = newCount,
+            returningClients = returningCount,
+            onDismiss = { viewModel.setShowCloseShift(false) },
+            onConfirmClose = { viewModel.closeShift(onShiftClosed) }
+        )
+    }
 
     Scaffold(
         containerColor = PaoBackground
@@ -82,7 +100,9 @@ fun ShiftScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .verticalScroll(scrollState)
                 .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp)
         ) {
             // Header
             Row(
@@ -92,7 +112,7 @@ fun ShiftScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Dados do Turno",
                         fontSize = 18.sp,
@@ -244,7 +264,7 @@ fun ShiftScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(20.dp))
 
             // Logout action (trocar hoster)
             OutlinedButton(

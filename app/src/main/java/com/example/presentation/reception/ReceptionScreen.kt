@@ -122,7 +122,7 @@ fun ReceptionScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = hoster?.name ?: "Recepção",
                         fontSize = 18.sp,

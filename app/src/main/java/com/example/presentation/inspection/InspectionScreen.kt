@@ -86,7 +86,7 @@ fun InspectionScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Inspeção ao Vivo",
                         fontSize = 18.sp,

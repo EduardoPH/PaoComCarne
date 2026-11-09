@@ -30,12 +30,14 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -295,6 +297,25 @@ fun HostersManagementScreen(
                         onDelete = { hosterToDelete = hoster }
                     )
                 }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Persistent bottom button to Logout / Return to Login screen
+            OutlinedButton(
+                onClick = { showLogoutConfirmDialog = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .padding(bottom = 12.dp)
+                    .testTag("admin_bottom_logout_button"),
+                shape = RoundedCornerShape(12.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, PaoRed.copy(alpha = 0.4f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = PaoRed)
+            ) {
+                Icon(imageVector = Icons.Default.ExitToApp, contentDescription = null, tint = PaoRed, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(text = "Sair do Login / Voltar ao Início", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = PaoRed)
             }
         }
     }

@@ -117,10 +117,11 @@ fun LoginScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .navigationBarsPadding()
                 .imePadding()
                 .verticalScroll(scrollState)
                 .padding(horizontal = 24.dp)
-                .padding(bottom = 24.dp),
+                .padding(bottom = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Header with Sync Pill
@@ -485,15 +486,31 @@ fun LoginScreen(
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        PaoPrimaryButton(
-                            text = if (uiState.isFirstAccess) "Cadastrar e Entrar" else "Entrar",
-                            onClick = {
-                                focusManager.clearFocus()
-                                viewModel.submit(onLoginSuccess)
-                            },
-                            isLoading = uiState.isLoading,
-                            testTag = "login_button"
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            com.example.presentation.components.PaoSecondaryButton(
+                                text = "Voltar",
+                                onClick = {
+                                    isSelectingHosterManually = true
+                                    viewModel.selectHoster(null)
+                                },
+                                modifier = Modifier.weight(1f),
+                                testTag = "login_back_button"
+                            )
+
+                            PaoPrimaryButton(
+                                text = if (uiState.isFirstAccess) "Cadastrar e Entrar" else "Entrar",
+                                onClick = {
+                                    focusManager.clearFocus()
+                                    viewModel.submit(onLoginSuccess)
+                                },
+                                isLoading = uiState.isLoading,
+                                modifier = Modifier.weight(1.4f),
+                                testTag = "login_button"
+                            )
+                        }
                     }
                 }
             }

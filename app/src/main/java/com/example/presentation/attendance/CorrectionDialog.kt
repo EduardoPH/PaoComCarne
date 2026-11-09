@@ -35,6 +35,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -132,22 +133,19 @@ fun CorrectionDialog(
     Dialog(
         onDismissRequest = { if (!isSubmitting) onDismiss() },
         properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
+            usePlatformDefaultWidth = false
         )
     ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(PaoBackground)
-                .statusBarsPadding()
-                .navigationBarsPadding(),
-            color = PaoBackground
-        ) {
+        Scaffold(
+            containerColor = PaoBackground
+        ) { innerPadding ->
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 20.dp, vertical = 12.dp)
+                    .padding(innerPadding)
+                    .navigationBarsPadding()
+                    .padding(horizontal = 20.dp)
+                    .padding(top = 12.dp, bottom = 72.dp)
             ) {
                 // Top Header
                 Row(
@@ -365,11 +363,20 @@ fun CorrectionDialog(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    Box(
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 24.dp)
+                            .navigationBarsPadding(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
+                        PaoSecondaryButton(
+                            text = "Cancelar",
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f),
+                            testTag = "correction_cancel_button"
+                        )
+
                         PaoPrimaryButton(
                             text = "Avançar para Resumo da Correção",
                             onClick = {
@@ -387,6 +394,7 @@ fun CorrectionDialog(
                                     step = 2
                                 }
                             },
+                            modifier = Modifier.weight(1.5f),
                             testTag = "correction_next_button"
                         )
                     }
@@ -470,10 +478,12 @@ fun CorrectionDialog(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(24.dp))
 
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .navigationBarsPadding(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             PaoSecondaryButton(

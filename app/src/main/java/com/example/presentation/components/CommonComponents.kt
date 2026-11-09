@@ -102,7 +102,9 @@ fun SyncStatusPill(
                 text = text,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
-                color = PaoAnthracite
+                color = PaoAnthracite,
+                maxLines = 1,
+                softWrap = false
             )
         }
     }

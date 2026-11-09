@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit
 object SupabaseConfig {
     // Supabase project provided by user: host db.iodvkbzszlrphuqvywbr.supabase.co
     const val DEFAULT_SUPABASE_URL = "https://iodvkbzszlrphuqvywbr.supabase.co"
-    const val DEFAULT_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.dudunega1325"
+    const val DEFAULT_ANON_KEY = "sb_publishable_ld0dSdRWiiFMxikrYyBNmA_VVRABrou"
 
     private const val PREFS_NAME = "supabase_config_prefs"
     private const val KEY_URL = "supabase_url"
@@ -26,7 +26,11 @@ object SupabaseConfig {
 
     fun getKey(context: Context): String {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(KEY_KEY, DEFAULT_ANON_KEY) ?: DEFAULT_ANON_KEY
+        val saved = prefs.getString(KEY_KEY, DEFAULT_ANON_KEY)
+        if (saved.isNullOrBlank() || saved.startsWith("eyJ") || saved.contains("dudunega")) {
+            return DEFAULT_ANON_KEY
+        }
+        return saved
     }
 
     fun saveConfig(context: Context, url: String, key: String) {

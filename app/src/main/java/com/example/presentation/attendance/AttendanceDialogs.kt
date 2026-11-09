@@ -37,6 +37,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -116,22 +118,19 @@ fun NewAttendanceDialog(
     Dialog(
         onDismissRequest = { if (!isSubmitting) onDismiss() },
         properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
+            usePlatformDefaultWidth = false
         )
     ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(PaoBackground)
-                .statusBarsPadding()
-                .navigationBarsPadding(),
-            color = PaoBackground
-        ) {
+        Scaffold(
+            containerColor = PaoBackground
+        ) { innerPadding ->
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 20.dp, vertical = 12.dp)
+                    .padding(innerPadding)
+                    .navigationBarsPadding()
+                    .padding(horizontal = 20.dp)
+                    .padding(top = 12.dp, bottom = 72.dp)
             ) {
                 // Top Action Bar
                 Row(
@@ -304,6 +303,18 @@ fun NewAttendanceDialog(
                                     testTag = "continue_group_button"
                                 )
                             }
+
+                            Spacer(modifier = Modifier.weight(1f))
+
+                            Spacer(modifier = Modifier.height(24.dp))
+                            PaoSecondaryButton(
+                                text = "Cancelar",
+                                onClick = onDismiss,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .navigationBarsPadding(),
+                                testTag = "cancel_attendance_step1"
+                            )
                         }
                     }
 
@@ -412,30 +423,45 @@ fun NewAttendanceDialog(
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(24.dp))
 
-                            // Botão avançar garantindo visibilidade total na tela
-                            PaoPrimaryButton(
-                                text = "Avançar para Resumo",
-                                onClick = {
-                                    // Validate origins for all new members
-                                    var hasIncompleteOrigin = false
-                                    for (m in membersDraft) {
-                                        if (m.classification == ClientClassification.NOVO && m.origin.isNullOrBlank()) {
-                                            hasIncompleteOrigin = true
-                                            break
+                            // Botões de ação inferiores garantindo visibilidade total
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .navigationBarsPadding(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                PaoSecondaryButton(
+                                    text = "Voltar",
+                                    onClick = { step = 1 },
+                                    modifier = Modifier.weight(1f),
+                                    testTag = "step2_back_button"
+                                )
+
+                                PaoPrimaryButton(
+                                    text = "Avançar para Resumo",
+                                    onClick = {
+                                        // Validate origins for all new members
+                                        var hasIncompleteOrigin = false
+                                        for (m in membersDraft) {
+                                            if (m.classification == ClientClassification.NOVO && m.origin.isNullOrBlank()) {
+                                                hasIncompleteOrigin = true
+                                                break
+                                            }
                                         }
-                                    }
 
-                                    if (hasIncompleteOrigin) {
-                                        validationError = "Selecione a origem de todos os clientes novos."
-                                    } else {
-                                        validationError = null
-                                        step = 3
-                                    }
-                                },
-                                testTag = "advance_to_summary_button"
-                            )
+                                        if (hasIncompleteOrigin) {
+                                            validationError = "Selecione a origem de todos os clientes novos."
+                                        } else {
+                                            validationError = null
+                                            step = 3
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1.4f),
+                                    testTag = "advance_to_summary_button"
+                                )
+                            }
                         }
                     }
 
@@ -522,11 +548,13 @@ fun NewAttendanceDialog(
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(24.dp))
 
                             // Botões com layout fixo e garantido acima da barra de navegação
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .navigationBarsPadding(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 PaoSecondaryButton(
