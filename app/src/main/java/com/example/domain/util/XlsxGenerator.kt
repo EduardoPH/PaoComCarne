@@ -28,10 +28,33 @@ object XlsxGenerator {
         val isPreferential: String
     )
 
+    data class DailySummary(
+        val dateLabel: String,
+        val totalClients: Int,
+        val morningClients: Int,
+        val nightClients: Int,
+        val newClients: Int,
+        val returningClients: Int,
+        val preferentialCount: Int,
+        val originsBreakdown: Map<String, Int>
+    )
+
+    data class ReportConsolidatedSummary(
+        val dailySummaries: List<DailySummary>,
+        val grandTotalClients: Int,
+        val grandMorningClients: Int,
+        val grandNightClients: Int,
+        val grandNewClients: Int,
+        val grandReturningClients: Int,
+        val grandPreferentialCount: Int,
+        val grandOriginsBreakdown: Map<String, Int>
+    )
+
     fun generateWorkbook(
         destinationFile: File,
         attendances: List<AttendanceRow>,
-        clients: List<ClientRow>
+        clients: List<ClientRow>,
+        summary: ReportConsolidatedSummary
     ) {
         val fos = FileOutputStream(destinationFile)
         val zos = ZipOutputStream(fos)
@@ -57,6 +80,9 @@ object XlsxGenerator {
 
             // 7. xl/worksheets/sheet2.xml (Clientes)
             addZipEntry(zos, "xl/worksheets/sheet2.xml", buildSheet2Xml(clients))
+
+            // 8. xl/worksheets/sheet3.xml (Resumo Diário e Origens)
+            addZipEntry(zos, "xl/worksheets/sheet3.xml", buildSheet3Xml(summary))
 
         } finally {
             zos.flush()
@@ -90,6 +116,7 @@ object XlsxGenerator {
   <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
   <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
   <Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/worksheets/sheet3.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
   <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 </Types>"""
 
@@ -103,6 +130,7 @@ object XlsxGenerator {
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
   <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>
   <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  <Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet3.xml"/>
 </Relationships>"""
 
     private fun buildWorkbookXml(): String = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -110,12 +138,13 @@ object XlsxGenerator {
   <sheets>
     <sheet name="Atendimentos" sheetId="1" r:id="rId1"/>
     <sheet name="Clientes" sheetId="2" r:id="rId2"/>
+    <sheet name="Resumo Diário &amp; Origens" sheetId="3" r:id="rId4"/>
   </sheets>
 </workbook>"""
 
     private fun buildStylesXml(): String = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <fonts count="2">
+  <fonts count="3">
     <font>
       <sz val="11"/>
       <color rgb="FF292421"/>
@@ -127,13 +156,25 @@ object XlsxGenerator {
       <color rgb="FFFFFFFF"/>
       <name val="Calibri"/>
     </font>
+    <font>
+      <b/>
+      <sz val="11"/>
+      <color rgb="FF292421"/>
+      <name val="Calibri"/>
+    </font>
   </fonts>
-  <fills count="3">
+  <fills count="4">
     <fill><patternFill patternType="none"/></fill>
     <fill><patternFill patternType="gray125"/></fill>
     <fill>
       <patternFill patternType="solid">
         <fgColor rgb="FFA62B2B"/>
+        <bgColor indexed="64"/>
+      </patternFill>
+    </fill>
+    <fill>
+      <patternFill patternType="solid">
+        <fgColor rgb="FFF5E8C7"/>
         <bgColor indexed="64"/>
       </patternFill>
     </fill>
@@ -144,9 +185,11 @@ object XlsxGenerator {
   <cellStyleXfs count="1">
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
   </cellStyleXfs>
-  <cellXfs count="2">
+  <cellXfs count="4">
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
     <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+    <xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+    <xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>
   </cellXfs>
 </styleSheet>"""
 
@@ -250,6 +293,184 @@ object XlsxGenerator {
             sb.append("      <c r=\"E$rowNum\" t=\"inlineStr\"><is><t>${escapeXml(client.origin)}</t></is></c>\n")
             sb.append("      <c r=\"F$rowNum\" t=\"inlineStr\"><is><t>${escapeXml(client.isPreferential)}</t></is></c>\n")
             sb.append("    </row>\n")
+        }
+
+        sb.append("""  </sheetData>
+</worksheet>""")
+        return sb.toString()
+    }
+
+    private fun buildSheet3Xml(summary: ReportConsolidatedSummary): String {
+        val sb = StringBuilder()
+        sb.append("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <cols>
+    <col min="1" max="1" width="38" customWidth="1"/>
+    <col min="2" max="2" width="16" customWidth="1"/>
+    <col min="3" max="3" width="24" customWidth="1"/>
+  </cols>
+  <sheetData>
+""")
+
+        var currentRow = 1
+        val standardOrigins = listOf("Instagram", "TikTok", "Indicação", "Google", "iFood", "Já foi na antiga loja")
+
+        // 1. Cada dia individualmente
+        summary.dailySummaries.forEach { day ->
+            // Banner do Dia (Estilo Vermelho)
+            sb.append("    <row r=\"$currentRow\">\n")
+            sb.append("      <c r=\"A$currentRow\" s=\"1\" t=\"inlineStr\"><is><t>DIA: ${escapeXml(day.dateLabel)}</t></is></c>\n")
+            sb.append("      <c r=\"B$currentRow\" s=\"1\" t=\"inlineStr\"><is><t>TOTAL</t></is></c>\n")
+            sb.append("      <c r=\"C$currentRow\" s=\"1\" t=\"inlineStr\"><is><t>DETALHAMENTO</t></is></c>\n")
+            sb.append("    </row>\n")
+            currentRow++
+
+            // Total de clientes do dia
+            sb.append("    <row r=\"$currentRow\">\n")
+            sb.append("      <c r=\"A$currentRow\" s=\"3\" t=\"inlineStr\"><is><t>Total de clientes</t></is></c>\n")
+            sb.append("      <c r=\"B$currentRow\"><v>${day.totalClients}</v></c>\n")
+            sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Clientes atendidos no dia</t></is></c>\n")
+            sb.append("    </row>\n")
+            currentRow++
+
+            // Cliente manhã
+            sb.append("    <row r=\"$currentRow\">\n")
+            sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>• Clientes manhã</t></is></c>\n")
+            sb.append("      <c r=\"B$currentRow\"><v>${day.morningClients}</v></c>\n")
+            sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Turno da Manhã</t></is></c>\n")
+            sb.append("    </row>\n")
+            currentRow++
+
+            // Clientes noite
+            sb.append("    <row r=\"$currentRow\">\n")
+            sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>• Clientes noite</t></is></c>\n")
+            sb.append("      <c r=\"B$currentRow\"><v>${day.nightClients}</v></c>\n")
+            sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Turno da Noite</t></is></c>\n")
+            sb.append("    </row>\n")
+            currentRow++
+
+            // Clientes novos
+            sb.append("    <row r=\"$currentRow\">\n")
+            sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>• Clientes novos</t></is></c>\n")
+            sb.append("      <c r=\"B$currentRow\"><v>${day.newClients}</v></c>\n")
+            sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Primeira vez na casa</t></is></c>\n")
+            sb.append("    </row>\n")
+            currentRow++
+
+            // Clientes recorrentes
+            sb.append("    <row r=\"$currentRow\">\n")
+            sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>• Clientes recorrentes</t></is></c>\n")
+            sb.append("      <c r=\"B$currentRow\"><v>${day.returningClients}</v></c>\n")
+            sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Já conheciam a hamburgueria</t></is></c>\n")
+            sb.append("    </row>\n")
+            currentRow++
+
+            // Preferenciais
+            sb.append("    <row r=\"$currentRow\">\n")
+            sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>• Atendimentos preferenciais</t></is></c>\n")
+            sb.append("      <c r=\"B$currentRow\"><v>${day.preferentialCount}</v></c>\n")
+            sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Prioridade legal</t></is></c>\n")
+            sb.append("    </row>\n")
+            currentRow++
+
+            // Sub-seção: De onde conheceram
+            sb.append("    <row r=\"$currentRow\">\n")
+            sb.append("      <c r=\"A$currentRow\" s=\"2\" t=\"inlineStr\"><is><t>De onde conheceram (Novos)</t></is></c>\n")
+            sb.append("      <c r=\"B$currentRow\" s=\"2\" t=\"inlineStr\"><is><t>Qtd</t></is></c>\n")
+            sb.append("      <c r=\"C$currentRow\" s=\"2\" t=\"inlineStr\"><is><t>% dos Novos</t></is></c>\n")
+            sb.append("    </row>\n")
+            currentRow++
+
+            val allDayOrigins = (standardOrigins + day.originsBreakdown.keys).distinct()
+            allDayOrigins.forEach { origin ->
+                val count = day.originsBreakdown[origin] ?: 0
+                val pct = if (day.newClients > 0) "${(count * 100) / day.newClients}%" else "0%"
+                sb.append("    <row r=\"$currentRow\">\n")
+                sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>    $origin</t></is></c>\n")
+                sb.append("      <c r=\"B$currentRow\"><v>$count</v></c>\n")
+                sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>$pct</t></is></c>\n")
+                sb.append("    </row>\n")
+                currentRow++
+            }
+
+            // Linha em branco para separação visual elegante
+            currentRow++
+        }
+
+        // 2. Total Geral no Fim
+        sb.append("    <row r=\"$currentRow\">\n")
+        sb.append("      <c r=\"A$currentRow\" s=\"1\" t=\"inlineStr\"><is><t>TOTAL GERAL DO PERÍODO</t></is></c>\n")
+        sb.append("      <c r=\"B$currentRow\" s=\"1\" t=\"inlineStr\"><is><t>CONSOLIDADO</t></is></c>\n")
+        sb.append("      <c r=\"C$currentRow\" s=\"1\" t=\"inlineStr\"><is><t>MÉTRICAS GLOBAIS</t></is></c>\n")
+        sb.append("    </row>\n")
+        currentRow++
+
+        // Total de cliente geral
+        sb.append("    <row r=\"$currentRow\">\n")
+        sb.append("      <c r=\"A$currentRow\" s=\"3\" t=\"inlineStr\"><is><t>Total de cliente</t></is></c>\n")
+        sb.append("      <c r=\"B$currentRow\"><v>${summary.grandTotalClients}</v></c>\n")
+        sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Total absoluto de clientes</t></is></c>\n")
+        sb.append("    </row>\n")
+        currentRow++
+
+        // Cliente manhã geral
+        sb.append("    <row r=\"$currentRow\">\n")
+        sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>• Cliente manhã</t></is></c>\n")
+        sb.append("      <c r=\"B$currentRow\"><v>${summary.grandMorningClients}</v></c>\n")
+        sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Soma turnos manhã</t></is></c>\n")
+        sb.append("    </row>\n")
+        currentRow++
+
+        // Clientes noite geral
+        sb.append("    <row r=\"$currentRow\">\n")
+        sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>• Clientes noite</t></is></c>\n")
+        sb.append("      <c r=\"B$currentRow\"><v>${summary.grandNightClients}</v></c>\n")
+        sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Soma turnos noite</t></is></c>\n")
+        sb.append("    </row>\n")
+        currentRow++
+
+        // Clientes novos geral
+        sb.append("    <row r=\"$currentRow\">\n")
+        sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>• Total clientes novos</t></is></c>\n")
+        sb.append("      <c r=\"B$currentRow\"><v>${summary.grandNewClients}</v></c>\n")
+        sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Primeira visita</t></is></c>\n")
+        sb.append("    </row>\n")
+        currentRow++
+
+        // Clientes recorrentes geral
+        sb.append("    <row r=\"$currentRow\">\n")
+        sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>• Total clientes recorrentes</t></is></c>\n")
+        sb.append("      <c r=\"B$currentRow\"><v>${summary.grandReturningClients}</v></c>\n")
+        sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Clientes habituais</t></is></c>\n")
+        sb.append("    </row>\n")
+        currentRow++
+
+        // Preferenciais geral
+        sb.append("    <row r=\"$currentRow\">\n")
+        sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>• Total atendimentos preferenciais</t></is></c>\n")
+        sb.append("      <c r=\"B$currentRow\"><v>${summary.grandPreferentialCount}</v></c>\n")
+        sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Total preferencial</t></is></c>\n")
+        sb.append("    </row>\n")
+        currentRow++
+
+        // Origens geral
+        sb.append("    <row r=\"$currentRow\">\n")
+        sb.append("      <c r=\"A$currentRow\" s=\"2\" t=\"inlineStr\"><is><t>De onde conheceram (Consolidado)</t></is></c>\n")
+        sb.append("      <c r=\"B$currentRow\" s=\"2\" t=\"inlineStr\"><is><t>Total Geral</t></is></c>\n")
+        sb.append("      <c r=\"C$currentRow\" s=\"2\" t=\"inlineStr\"><is><t>% Total dos Novos</t></is></c>\n")
+        sb.append("    </row>\n")
+        currentRow++
+
+        val allGrandOrigins = (standardOrigins + summary.grandOriginsBreakdown.keys).distinct()
+        allGrandOrigins.forEach { origin ->
+            val grandCount = summary.grandOriginsBreakdown[origin] ?: 0
+            val pct = if (summary.grandNewClients > 0) "${(grandCount * 100) / summary.grandNewClients}%" else "0%"
+            sb.append("    <row r=\"$currentRow\">\n")
+            sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>    $origin</t></is></c>\n")
+            sb.append("      <c r=\"B$currentRow\"><v>$grandCount</v></c>\n")
+            sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>$pct</t></is></c>\n")
+            sb.append("    </row>\n")
+            currentRow++
         }
 
         sb.append("""  </sheetData>

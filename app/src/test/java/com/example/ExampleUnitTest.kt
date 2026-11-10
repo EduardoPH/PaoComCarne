@@ -70,4 +70,70 @@ class ExampleUnitTest {
         assertTrue(json.contains("\"origin\":\"Indicação\""))
         assertTrue(json.contains("\"origin\":null"))
     }
+
+    @Test
+    fun testGenerateXlsxWith3Sheets() {
+        val tempFile = java.io.File.createTempFile("test_report", ".xlsx")
+        val attendances = listOf(
+            com.example.domain.util.XlsxGenerator.AttendanceRow(
+                id = "att1",
+                date = "10/11/2026 12:30",
+                shift = "Manhã",
+                hoster = "Admin",
+                type = "SOLO",
+                isPreferential = "Não",
+                totalMembers = 1,
+                newMembers = 1,
+                returningMembers = 0
+            )
+        )
+        val clients = listOf(
+            com.example.domain.util.XlsxGenerator.ClientRow(
+                attendanceId = "att1",
+                hoster = "Admin",
+                memberNumber = 1,
+                classification = "Novo",
+                origin = "Instagram",
+                isPreferential = "Não"
+            )
+        )
+        val daily = listOf(
+            com.example.domain.util.XlsxGenerator.DailySummary(
+                dateLabel = "10/11/2026",
+                totalClients = 1,
+                morningClients = 1,
+                nightClients = 0,
+                newClients = 1,
+                returningClients = 0,
+                preferentialCount = 0,
+                originsBreakdown = mapOf("Instagram" to 1)
+            )
+        )
+        val consolidated = com.example.domain.util.XlsxGenerator.ReportConsolidatedSummary(
+            dailySummaries = daily,
+            grandTotalClients = 1,
+            grandMorningClients = 1,
+            grandNightClients = 0,
+            grandNewClients = 1,
+            grandReturningClients = 0,
+            grandPreferentialCount = 0,
+            grandOriginsBreakdown = mapOf("Instagram" to 1)
+        )
+
+        com.example.domain.util.XlsxGenerator.generateWorkbook(tempFile, attendances, clients, consolidated)
+
+        assertTrue(tempFile.exists())
+        assertTrue(tempFile.length() > 0)
+
+        // Validate that sheet3.xml exists inside the generated zip
+        val zipFile = java.util.zip.ZipFile(tempFile)
+        val sheet1 = zipFile.getEntry("xl/worksheets/sheet1.xml")
+        val sheet2 = zipFile.getEntry("xl/worksheets/sheet2.xml")
+        val sheet3 = zipFile.getEntry("xl/worksheets/sheet3.xml")
+        assertTrue(sheet1 != null)
+        assertTrue(sheet2 != null)
+        assertTrue(sheet3 != null)
+        zipFile.close()
+        tempFile.delete()
+    }
 }

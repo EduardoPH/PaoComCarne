@@ -13,6 +13,7 @@ import com.example.domain.model.Attendance
 import com.example.domain.model.AttendanceMember
 import com.example.domain.model.Shift
 import com.example.domain.model.SyncState
+import com.example.domain.util.DateTimeUtils
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -24,19 +25,34 @@ import java.io.File
 import java.util.Calendar
 
 enum class DateFilterOption(val label: String) {
-    TODOS("Todos os períodos"),
     HOJE("Hoje"),
     ONTEM("Ontem"),
-    ULTIMOS_7_DIAS("Últimos 7 dias")
+    ULTIMOS_7_DIAS("Últimos 7 dias"),
+    ULTIMOS_30_DIAS("Últimos 30 dias"),
+    MES_ATUAL("Mês atual"),
+    DIA_ESPECIFICO("Dia específico"),
+    INTERVALO_PERSONALIZADO("Início e Fim"),
+    TODOS("Todo o período")
 }
 
 data class AdminFilterState(
-    val dateOption: DateFilterOption = DateFilterOption.TODOS,
+    val dateOption: DateFilterOption = DateFilterOption.HOJE,
+    val specificDateMillis: Long = System.currentTimeMillis(),
+    val customStartMillis: Long = System.currentTimeMillis() - 7 * 86400000L,
+    val customEndMillis: Long = System.currentTimeMillis(),
     val selectedHosterId: String? = null,
-    val selectedPeriod: String? = null, // "MANHA", "NOITE", or null
+    val selectedPeriod: String? = null, // "MANHA", "NOITE", or null (Todos)
     val selectedOrigin: String? = null,
     val selectedClassification: String? = null, // "NOVO", "RECORRENTE", or null
     val preferentialOnly: Boolean = false
+)
+
+data class ExportSuccessData(
+    val file: File,
+    val fileName: String,
+    val rowCount: Int,
+    val totalClients: Int,
+    val periodLabel: String
 )
 
 data class AdminMetrics(
@@ -58,9 +74,8 @@ data class AdminUiState(
     val metrics: AdminMetrics = AdminMetrics(),
     val openShifts: List<Shift> = emptyList(),
     val isExporting: Boolean = false,
-    val exportMessage: String? = null,
-    val exportErrorMessage: String? = null,
-    val exportFileToShare: File? = null
+    val exportSuccessData: ExportSuccessData? = null,
+    val exportErrorMessage: String? = null
 )
 
 class AdminViewModel(
@@ -98,44 +113,133 @@ class AdminViewModel(
         syncManager.triggerSync()
     }
 
-    private suspend fun computeMetrics(
-        shifts: List<Shift>,
-        attendances: List<Attendance>,
-        filter: AdminFilterState
-    ): Pair<AdminMetrics, List<Shift>> {
-        val now = System.currentTimeMillis()
+    private fun calculateDateRange(filter: AdminFilterState): Pair<Long, Long> {
         val cal = Calendar.getInstance()
-
-        val (startMillis, endMillis) = when (filter.dateOption) {
-            DateFilterOption.TODOS -> Pair(0L, Long.MAX_VALUE)
+        return when (filter.dateOption) {
             DateFilterOption.HOJE -> {
                 cal.set(Calendar.HOUR_OF_DAY, 0)
                 cal.set(Calendar.MINUTE, 0)
                 cal.set(Calendar.SECOND, 0)
                 cal.set(Calendar.MILLISECOND, 0)
                 val start = cal.timeInMillis
-                Pair(start, Long.MAX_VALUE)
+                cal.set(Calendar.HOUR_OF_DAY, 23)
+                cal.set(Calendar.MINUTE, 59)
+                cal.set(Calendar.SECOND, 59)
+                cal.set(Calendar.MILLISECOND, 999)
+                Pair(start, cal.timeInMillis)
             }
             DateFilterOption.ONTEM -> {
                 cal.add(Calendar.DAY_OF_YEAR, -1)
                 cal.set(Calendar.HOUR_OF_DAY, 0)
                 cal.set(Calendar.MINUTE, 0)
                 cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
                 val start = cal.timeInMillis
                 cal.set(Calendar.HOUR_OF_DAY, 23)
                 cal.set(Calendar.MINUTE, 59)
                 cal.set(Calendar.SECOND, 59)
-                val end = cal.timeInMillis
-                Pair(start, end)
+                cal.set(Calendar.MILLISECOND, 999)
+                Pair(start, cal.timeInMillis)
             }
             DateFilterOption.ULTIMOS_7_DIAS -> {
-                cal.add(Calendar.DAY_OF_YEAR, -7)
+                cal.set(Calendar.HOUR_OF_DAY, 23)
+                cal.set(Calendar.MINUTE, 59)
+                cal.set(Calendar.SECOND, 59)
+                cal.set(Calendar.MILLISECOND, 999)
+                val end = cal.timeInMillis
+                cal.add(Calendar.DAY_OF_YEAR, -6)
                 cal.set(Calendar.HOUR_OF_DAY, 0)
                 cal.set(Calendar.MINUTE, 0)
-                Pair(cal.timeInMillis, Long.MAX_VALUE)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                Pair(cal.timeInMillis, end)
+            }
+            DateFilterOption.ULTIMOS_30_DIAS -> {
+                cal.set(Calendar.HOUR_OF_DAY, 23)
+                cal.set(Calendar.MINUTE, 59)
+                cal.set(Calendar.SECOND, 59)
+                cal.set(Calendar.MILLISECOND, 999)
+                val end = cal.timeInMillis
+                cal.add(Calendar.DAY_OF_YEAR, -29)
+                cal.set(Calendar.HOUR_OF_DAY, 0)
+                cal.set(Calendar.MINUTE, 0)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                Pair(cal.timeInMillis, end)
+            }
+            DateFilterOption.MES_ATUAL -> {
+                cal.set(Calendar.DAY_OF_MONTH, 1)
+                cal.set(Calendar.HOUR_OF_DAY, 0)
+                cal.set(Calendar.MINUTE, 0)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                val start = cal.timeInMillis
+
+                cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH))
+                cal.set(Calendar.HOUR_OF_DAY, 23)
+                cal.set(Calendar.MINUTE, 59)
+                cal.set(Calendar.SECOND, 59)
+                cal.set(Calendar.MILLISECOND, 999)
+                Pair(start, cal.timeInMillis)
+            }
+            DateFilterOption.DIA_ESPECIFICO -> {
+                cal.timeInMillis = filter.specificDateMillis
+                cal.set(Calendar.HOUR_OF_DAY, 0)
+                cal.set(Calendar.MINUTE, 0)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                val start = cal.timeInMillis
+                cal.set(Calendar.HOUR_OF_DAY, 23)
+                cal.set(Calendar.MINUTE, 59)
+                cal.set(Calendar.SECOND, 59)
+                cal.set(Calendar.MILLISECOND, 999)
+                Pair(start, cal.timeInMillis)
+            }
+            DateFilterOption.INTERVALO_PERSONALIZADO -> {
+                cal.timeInMillis = filter.customStartMillis
+                cal.set(Calendar.HOUR_OF_DAY, 0)
+                cal.set(Calendar.MINUTE, 0)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                val start = cal.timeInMillis
+
+                cal.timeInMillis = filter.customEndMillis
+                cal.set(Calendar.HOUR_OF_DAY, 23)
+                cal.set(Calendar.MINUTE, 59)
+                cal.set(Calendar.SECOND, 59)
+                cal.set(Calendar.MILLISECOND, 999)
+                Pair(start, cal.timeInMillis)
+            }
+            DateFilterOption.TODOS -> {
+                Pair(0L, Long.MAX_VALUE)
             }
         }
+    }
 
+    private fun getPeriodDisplayLabel(filter: AdminFilterState): String {
+        val periodStr = when (filter.selectedPeriod) {
+            "MANHA" -> " (Turno Manhã)"
+            "NOITE" -> " (Turno Noite)"
+            else -> ""
+        }
+        return when (filter.dateOption) {
+            DateFilterOption.HOJE -> "Hoje$periodStr"
+            DateFilterOption.ONTEM -> "Ontem$periodStr"
+            DateFilterOption.ULTIMOS_7_DIAS -> "Últimos 7 dias$periodStr"
+            DateFilterOption.ULTIMOS_30_DIAS -> "Últimos 30 dias$periodStr"
+            DateFilterOption.MES_ATUAL -> "Mês atual$periodStr"
+            DateFilterOption.DIA_ESPECIFICO -> "${DateTimeUtils.formatDate(filter.specificDateMillis)}$periodStr"
+            DateFilterOption.INTERVALO_PERSONALIZADO -> "${DateTimeUtils.formatDate(filter.customStartMillis)} até ${DateTimeUtils.formatDate(filter.customEndMillis)}$periodStr"
+            DateFilterOption.TODOS -> "Todo o período$periodStr"
+        }
+    }
+
+    private suspend fun computeMetrics(
+        shifts: List<Shift>,
+        attendances: List<Attendance>,
+        filter: AdminFilterState
+    ): Pair<AdminMetrics, List<Shift>> {
+        val (startMillis, endMillis) = calculateDateRange(filter)
         val shiftsById = shifts.associateBy { it.id }
 
         // Filter attendances
@@ -213,6 +317,25 @@ class AdminViewModel(
         )
     }
 
+    fun setSpecificDate(millis: Long) {
+        _uiState.value = _uiState.value.copy(
+            filter = _uiState.value.filter.copy(
+                dateOption = DateFilterOption.DIA_ESPECIFICO,
+                specificDateMillis = millis
+            )
+        )
+    }
+
+    fun setCustomDateRange(startMillis: Long, endMillis: Long) {
+        _uiState.value = _uiState.value.copy(
+            filter = _uiState.value.filter.copy(
+                dateOption = DateFilterOption.INTERVALO_PERSONALIZADO,
+                customStartMillis = startMillis,
+                customEndMillis = endMillis
+            )
+        )
+    }
+
     fun setHosterFilter(hosterId: String?) {
         _uiState.value = _uiState.value.copy(
             filter = _uiState.value.filter.copy(selectedHosterId = hosterId)
@@ -231,42 +354,25 @@ class AdminViewModel(
         )
     }
 
-    fun clearExportMessages() {
-        _uiState.value = _uiState.value.copy(
-            exportMessage = null,
-            exportErrorMessage = null,
-            exportFileToShare = null
-        )
+    fun dismissExportDialog() {
+        _uiState.value = _uiState.value.copy(exportSuccessData = null)
+    }
+
+    fun dismissExportError() {
+        _uiState.value = _uiState.value.copy(exportErrorMessage = null)
     }
 
     fun exportExcel() {
         val filter = _uiState.value.filter
-        val cal = Calendar.getInstance()
-        val (startMillis, endMillis) = when (filter.dateOption) {
-            DateFilterOption.TODOS -> Pair(0L, System.currentTimeMillis())
-            DateFilterOption.HOJE -> {
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                Pair(cal.timeInMillis, System.currentTimeMillis())
-            }
-            DateFilterOption.ONTEM -> {
-                cal.add(Calendar.DAY_OF_YEAR, -1)
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                val start = cal.timeInMillis
-                cal.set(Calendar.HOUR_OF_DAY, 23)
-                cal.set(Calendar.MINUTE, 59)
-                Pair(start, cal.timeInMillis)
-            }
-            DateFilterOption.ULTIMOS_7_DIAS -> {
-                cal.add(Calendar.DAY_OF_YEAR, -7)
-                Pair(cal.timeInMillis, System.currentTimeMillis())
-            }
-        }
+        val (startMillis, endMillis) = calculateDateRange(filter)
+        val periodLabel = getPeriodDisplayLabel(filter)
 
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isExporting = true, exportMessage = null, exportErrorMessage = null)
+            _uiState.value = _uiState.value.copy(
+                isExporting = true,
+                exportSuccessData = null,
+                exportErrorMessage = null
+            )
             val result = exportRepository.exportReport(
                 startMillis = startMillis,
                 endMillis = endMillis,
@@ -278,8 +384,13 @@ class AdminViewModel(
             when (result) {
                 is ExportResult.Success -> {
                     _uiState.value = _uiState.value.copy(
-                        exportMessage = "Relatório ${result.fileName} gerado com sucesso! (${result.rowCount} atendimentos)",
-                        exportFileToShare = result.file
+                        exportSuccessData = ExportSuccessData(
+                            file = result.file,
+                            fileName = result.fileName,
+                            rowCount = result.rowCount,
+                            totalClients = result.totalClients,
+                            periodLabel = periodLabel
+                        )
                     )
                 }
                 is ExportResult.Blocked -> {
@@ -312,8 +423,27 @@ class AdminViewModel(
             context.startActivity(Intent.createChooser(intent, "Compartilhar Relatório XLSX"))
         } catch (e: Exception) {
             _uiState.value = _uiState.value.copy(
-                exportErrorMessage = "Erro ao abrir compartilhamento: ${e.message}"
+                exportErrorMessage = "Erro ao compartilhar arquivo: ${e.message}"
             )
+        }
+    }
+
+    fun openExportedFile(context: Context, file: File) {
+        try {
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            // If no viewer is installed, fallback directly to sharing
+            shareExportedFile(context, file)
         }
     }
 }

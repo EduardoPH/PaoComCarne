@@ -125,3 +125,18 @@ O APK será gerado em: `app/build/outputs/apk/release/app-release.apk`.
 gradle assembleDebug
 ```
 O APK será gerado em: `app/build/outputs/apk/debug/app-debug.apk`.
+
+---
+
+### 7. Integração Contínua e Build no GitHub Actions (.github/workflows/main.yml)
+
+O repositório já inclui o fluxo automatizado para compilar e gerar os APKs no GitHub Actions:
+- **Gatilhos automáticos**:
+  - `push` e `pull_request` nas branches `main` e `master`.
+  - Disparo manual através do botão **"Run workflow"** (`workflow_dispatch`).
+  - Criação de **Tags/Releases** (ex: `v1.0.0`).
+- **Recursos inclusos**:
+  - JDK 17 (Temurin) e cache inteligente do Gradle (`gradle/actions/setup-gradle@v3`).
+  - Preparação automática de assinatura: caso não haja Secrets configurados, gera automaticamente uma chave com alias `upload` para garantir que o build de release nunca falhe.
+  - Upload automático dos APKs (`app-release.apk` e `app-debug.apk`) como artefatos para download imediato na aba **Actions**.
+  - Publicação automática na aba **Releases** do GitHub quando uma tag for enviada.

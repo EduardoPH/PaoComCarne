@@ -10,7 +10,12 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 sealed class ExportResult {
-    data class Success(val file: File, val fileName: String, val rowCount: Int) : ExportResult()
+    data class Success(
+        val file: File,
+        val fileName: String,
+        val rowCount: Int,
+        val totalClients: Int = 0
+    ) : ExportResult()
     data class Blocked(val reason: String, val openShiftsCount: Int = 0, val pendingSyncCount: Int = 0) : ExportResult()
     data class Failure(val message: String) : ExportResult()
 }
@@ -50,12 +55,17 @@ class ExportRepository(
                 )
             }
 
+            val shifts = shiftDao.getAllShifts().associateBy { it.id }
+
             // Fetch attendances in period
             val allAttendances = attendanceDao.getAllAttendances()
             val filteredAttendances = allAttendances.filter { att ->
-                att.createdAt in startMillis..endMillis &&
-                        (selectedHosterId == null || att.hosterId == selectedHosterId)
-            }
+                val matchDate = att.createdAt in startMillis..endMillis
+                val matchHoster = selectedHosterId == null || att.hosterId == selectedHosterId
+                val shift = shifts[att.shiftId]
+                val matchPeriod = selectedShiftPeriod == null || shift?.period == selectedShiftPeriod
+                matchDate && matchHoster && matchPeriod
+            }.sortedBy { it.createdAt }
 
             if (filteredAttendances.isEmpty()) {
                 return@withContext ExportResult.Failure("Nenhum atendimento encontrado para os critérios e período selecionados.")
@@ -65,9 +75,7 @@ class ExportRepository(
             val allMembers = memberDao.getAllMembers().filter { it.attendanceId in attendanceIds }
             val memberMap = allMembers.groupBy { it.attendanceId }
 
-            val shifts = shiftDao.getAllShifts().associateBy { it.id }
-
-            // Build Aba 1 rows
+            // Build Aba 1 rows (Atendimentos)
             val attendanceRows = filteredAttendances.map { att ->
                 val shift = shifts[att.shiftId]
                 val periodDisplay = shift?.let { if (it.period == "MANHA") "Manhã" else "Noite" } ?: "N/D"
@@ -84,7 +92,7 @@ class ExportRepository(
                 )
             }
 
-            // Build Aba 2 rows
+            // Build Aba 2 rows (Clientes Individuais)
             val clientRows = mutableListOf<XlsxGenerator.ClientRow>()
             filteredAttendances.forEach { att ->
                 val members = memberMap[att.id].orEmpty()
@@ -102,19 +110,79 @@ class ExportRepository(
                 }
             }
 
+            // Build Aba 3 (Resumo Diário e Consolidado Geral)
+            val byDay = filteredAttendances.groupBy { DateTimeUtils.formatDate(it.createdAt) }
+            val dailySummaries = byDay.map { (dateLabel, dayAtts) ->
+                val dayTotalClients = dayAtts.sumOf { it.totalMembers }
+                val dayMorning = dayAtts.filter { shifts[it.shiftId]?.period == "MANHA" }.sumOf { it.totalMembers }
+                val dayNight = dayAtts.filter { shifts[it.shiftId]?.period == "NOITE" }.sumOf { it.totalMembers }
+                val dayNew = dayAtts.sumOf { it.newMembers }
+                val dayRet = dayAtts.sumOf { it.returningMembers }
+                val dayPref = dayAtts.count { it.isPreferential }
+
+                val dayOrigins = mutableMapOf<String, Int>()
+                dayAtts.forEach { att ->
+                    val members = memberMap[att.id].orEmpty()
+                    members.filter { it.classification == "NOVO" }.forEach { m ->
+                        val orig = m.origin?.trim()?.takeIf { it.isNotBlank() } ?: "Outros"
+                        dayOrigins[orig] = (dayOrigins[orig] ?: 0) + 1
+                    }
+                }
+
+                XlsxGenerator.DailySummary(
+                    dateLabel = dateLabel,
+                    totalClients = dayTotalClients,
+                    morningClients = dayMorning,
+                    nightClients = dayNight,
+                    newClients = dayNew,
+                    returningClients = dayRet,
+                    preferentialCount = dayPref,
+                    originsBreakdown = dayOrigins
+                )
+            }
+
+            val grandOrigins = mutableMapOf<String, Int>()
+            filteredAttendances.forEach { att ->
+                val members = memberMap[att.id].orEmpty()
+                members.filter { it.classification == "NOVO" }.forEach { m ->
+                    val orig = m.origin?.trim()?.takeIf { it.isNotBlank() } ?: "Outros"
+                    grandOrigins[orig] = (grandOrigins[orig] ?: 0) + 1
+                }
+            }
+
+            val grandTotalClients = filteredAttendances.sumOf { it.totalMembers }
+            val grandMorningClients = filteredAttendances.filter { shifts[it.shiftId]?.period == "MANHA" }.sumOf { it.totalMembers }
+            val grandNightClients = filteredAttendances.filter { shifts[it.shiftId]?.period == "NOITE" }.sumOf { it.totalMembers }
+            val grandNewClients = filteredAttendances.sumOf { it.newMembers }
+            val grandReturningClients = filteredAttendances.sumOf { it.returningMembers }
+            val grandPreferentialCount = filteredAttendances.count { it.isPreferential }
+
+            val consolidatedSummary = XlsxGenerator.ReportConsolidatedSummary(
+                dailySummaries = dailySummaries,
+                grandTotalClients = grandTotalClients,
+                grandMorningClients = grandMorningClients,
+                grandNightClients = grandNightClients,
+                grandNewClients = grandNewClients,
+                grandReturningClients = grandReturningClients,
+                grandPreferentialCount = grandPreferentialCount,
+                grandOriginsBreakdown = grandOrigins
+            )
+
             val startDateStr = DateTimeUtils.formatFileDate(startMillis)
             val endDateStr = DateTimeUtils.formatFileDate(endMillis)
-            val fileName = "PaoComCarne_Relatorio_${startDateStr}_a_${endDateStr}.xlsx"
+            val periodSuffix = if (selectedShiftPeriod != null) "_${selectedShiftPeriod}" else ""
+            val fileName = "PaoComCarne_Relatorio_${startDateStr}_a_${endDateStr}${periodSuffix}.xlsx"
 
             val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
             val targetFile = File(exportDir, fileName)
 
-            XlsxGenerator.generateWorkbook(targetFile, attendanceRows, clientRows)
+            XlsxGenerator.generateWorkbook(targetFile, attendanceRows, clientRows, consolidatedSummary)
 
             ExportResult.Success(
                 file = targetFile,
                 fileName = fileName,
-                rowCount = attendanceRows.size
+                rowCount = attendanceRows.size,
+                totalClients = grandTotalClients
             )
         } catch (e: Exception) {
             ExportResult.Failure(e.message ?: "Erro desconhecido ao gerar arquivo Excel.")

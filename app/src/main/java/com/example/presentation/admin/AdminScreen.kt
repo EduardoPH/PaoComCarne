@@ -1,5 +1,6 @@
 package com.example.presentation.admin
 
+import android.app.DatePickerDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,26 +18,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Assessment
-import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FilterList
-import androidx.compose.material.icons.filled.Group
-import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
@@ -44,7 +41,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import com.example.domain.model.SyncState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -55,11 +51,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.domain.model.ClientOrigins
 import com.example.domain.model.Shift
+import com.example.domain.model.SyncState
 import com.example.domain.util.DateTimeUtils
+import com.example.presentation.components.LocalSyncLogsOpener
 import com.example.presentation.components.PaoPrimaryButton
 import com.example.presentation.components.SyncStatusPill
 import com.example.ui.theme.PaoAnthracite
@@ -73,6 +72,7 @@ import com.example.ui.theme.PaoRed
 import com.example.ui.theme.StatusAmber
 import com.example.ui.theme.StatusGreen
 import com.example.ui.theme.StatusRed
+import java.util.Calendar
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -85,6 +85,191 @@ fun AdminScreen(
     val context = LocalContext.current
 
     val metrics = uiState.metrics
+
+    // Modal de Confirmação e Compartilhamento ao Gerar Relatório
+    if (uiState.exportSuccessData != null) {
+        val successData = uiState.exportSuccessData!!
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissExportDialog() },
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = StatusGreen,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Text(
+                        text = "Relatório Gerado!",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PaoAnthracite
+                    )
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Planilha XLSX consolidada pronta para compartilhamento e análise.",
+                        fontSize = 13.sp,
+                        color = PaoAnthraciteMuted
+                    )
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = PaoCreamLight,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Período:", fontSize = 12.sp, color = PaoAnthraciteMuted)
+                                Text(
+                                    text = successData.periodLabel,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = PaoAnthracite
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Total de Clientes:", fontSize = 12.sp, color = PaoAnthraciteMuted)
+                                Text(
+                                    text = "${successData.totalClients} pessoas",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = PaoRed
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Atendimentos:", fontSize = 12.sp, color = PaoAnthraciteMuted)
+                                Text(
+                                    text = "${successData.rowCount} registros",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = PaoAnthracite
+                                )
+                            }
+                        }
+                    }
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = Color.White,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, PaoBorderLight),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text(
+                                text = "Abas incluídas na planilha:",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = PaoAnthracite
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("1. Atendimentos (Turno, hoster, membros, tipo)", fontSize = 11.sp, color = PaoAnthraciteMuted)
+                            Text("2. Clientes (Individual, origem, classificação)", fontSize = 11.sp, color = PaoAnthraciteMuted)
+                            Text("3. Resumo Diário & Origens (Métricas por dia, turnos e canais)", fontSize = 11.sp, color = PaoAnthraciteMuted)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.shareExportedFile(context, successData.file)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = PaoRed),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.testTag("btn_modal_compartilhar")
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Compartilhar", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            viewModel.openExportedFile(context, successData.file)
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.testTag("btn_modal_abrir")
+                    ) {
+                        Text("Abrir", fontSize = 13.sp, color = PaoAnthracite)
+                    }
+                    TextButton(
+                        onClick = { viewModel.dismissExportDialog() },
+                        modifier = Modifier.testTag("btn_modal_fechar")
+                    ) {
+                        Text("Fechar", fontSize = 13.sp, color = PaoAnthraciteMuted)
+                    }
+                }
+            },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(20.dp)
+        )
+    }
+
+    // Modal de Erro/Aviso na Exportação
+    if (uiState.exportErrorMessage != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissExportError() },
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = StatusRed,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = "Não Foi Possível Exportar",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = StatusRed
+                    )
+                }
+            },
+            text = {
+                Text(
+                    text = uiState.exportErrorMessage ?: "",
+                    fontSize = 13.sp,
+                    color = PaoAnthracite
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.dismissExportError() },
+                    colors = ButtonDefaults.buttonColors(containerColor = PaoAnthracite),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Entendido", fontSize = 13.sp)
+                }
+            },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(18.dp)
+        )
+    }
 
     Scaffold(
         containerColor = PaoBackground
@@ -129,7 +314,7 @@ fun AdminScreen(
             // Banner de aviso sobre informações em cache e sincronização
             if (syncState != SyncState.SINCRONIZADO || pendingCount > 0) {
                 item {
-                    val opener = com.example.presentation.components.LocalSyncLogsOpener.current
+                    val opener = LocalSyncLogsOpener.current
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -171,96 +356,35 @@ fun AdminScreen(
                 }
             }
 
-            // Export Result Banners
-            if (uiState.exportMessage != null) {
-                item {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp)),
-                        color = StatusGreen.copy(alpha = 0.12f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, StatusGreen.copy(alpha = 0.4f))
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                modifier = Modifier.weight(1f),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = StatusGreen)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = uiState.exportMessage ?: "",
-                                    fontSize = 12.sp,
-                                    color = PaoAnthracite,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                            if (uiState.exportFileToShare != null) {
-                                Button(
-                                    onClick = { viewModel.shareExportedFile(context, uiState.exportFileToShare!!) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = StatusGreen),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Abrir", fontSize = 12.sp)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (uiState.exportErrorMessage != null) {
-                item {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp)),
-                        color = StatusRed.copy(alpha = 0.12f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, StatusRed.copy(alpha = 0.4f))
-                    ) {
-                        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Block, contentDescription = null, tint = StatusRed)
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = uiState.exportErrorMessage ?: "",
-                                fontSize = 12.sp,
-                                color = StatusRed,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-                }
-            }
-
             // Filter Bar Card
             item {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .border(1.dp, PaoBorder, RoundedCornerShape(14.dp)),
+                        .border(1.dp, PaoBorder, RoundedCornerShape(16.dp)),
                     colors = CardDefaults.cardColors(containerColor = Color.White),
-                    shape = RoundedCornerShape(14.dp)
+                    shape = RoundedCornerShape(16.dp)
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.FilterList, contentDescription = null, tint = PaoRed, modifier = Modifier.size(18.dp))
+                            Icon(
+                                Icons.Default.FilterList,
+                                contentDescription = null,
+                                tint = PaoRed,
+                                modifier = Modifier.size(18.dp)
+                            )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Filtros de Período e Dados",
+                                text = "Período do Relatório e Filtros",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = PaoAnthracite
                             )
                         }
+
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        // Date Filter chips
+                        // Opções rápidas de data
                         FlowRow(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -271,7 +395,8 @@ fun AdminScreen(
                                 Surface(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(14.dp))
-                                        .clickable { viewModel.setDateFilter(opt) },
+                                        .clickable { viewModel.setDateFilter(opt) }
+                                        .testTag("filter_date_${opt.name.lowercase()}"),
                                     color = if (isSelected) PaoRed else PaoCreamLight,
                                     shape = RoundedCornerShape(14.dp)
                                 ) {
@@ -286,20 +411,165 @@ fun AdminScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        // Se for "Dia específico", exibir seletor de dia
+                        if (uiState.filter.dateOption == DateFilterOption.DIA_ESPECIFICO) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        val cal = Calendar.getInstance().apply {
+                                            timeInMillis = uiState.filter.specificDateMillis
+                                        }
+                                        DatePickerDialog(
+                                            context,
+                                            { _, y, m, d ->
+                                                val sel = Calendar.getInstance().apply {
+                                                    set(y, m, d)
+                                                }
+                                                viewModel.setSpecificDate(sel.timeInMillis)
+                                            },
+                                            cal.get(Calendar.YEAR),
+                                            cal.get(Calendar.MONTH),
+                                            cal.get(Calendar.DAY_OF_MONTH)
+                                        ).show()
+                                    },
+                                color = PaoCreamLight,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, PaoBorder),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.CalendarToday,
+                                        contentDescription = null,
+                                        tint = PaoRed,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Dia selecionado: ${DateTimeUtils.formatDate(uiState.filter.specificDateMillis)} (toque para alterar)",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = PaoAnthracite
+                                    )
+                                }
+                            }
+                        }
 
-                        // Period filter (Todos, Manhã, Noite) and Preferential toggle
+                        // Se for "Início e Fim", exibir dois seletores de data
+                        if (uiState.filter.dateOption == DateFilterOption.INTERVALO_PERSONALIZADO) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Surface(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            val cal = Calendar.getInstance().apply {
+                                                timeInMillis = uiState.filter.customStartMillis
+                                            }
+                                            DatePickerDialog(
+                                                context,
+                                                { _, y, m, d ->
+                                                    val sel = Calendar.getInstance().apply {
+                                                        set(y, m, d)
+                                                    }
+                                                    viewModel.setCustomDateRange(
+                                                        sel.timeInMillis,
+                                                        uiState.filter.customEndMillis
+                                                    )
+                                                },
+                                                cal.get(Calendar.YEAR),
+                                                cal.get(Calendar.MONTH),
+                                                cal.get(Calendar.DAY_OF_MONTH)
+                                            ).show()
+                                        },
+                                    color = PaoCreamLight,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, PaoBorder),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        Text("Data Início", fontSize = 10.sp, color = PaoAnthraciteMuted)
+                                        Text(
+                                            DateTimeUtils.formatDate(uiState.filter.customStartMillis),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = PaoAnthracite
+                                        )
+                                    }
+                                }
+
+                                Surface(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            val cal = Calendar.getInstance().apply {
+                                                timeInMillis = uiState.filter.customEndMillis
+                                            }
+                                            DatePickerDialog(
+                                                context,
+                                                { _, y, m, d ->
+                                                    val sel = Calendar.getInstance().apply {
+                                                        set(y, m, d)
+                                                    }
+                                                    viewModel.setCustomDateRange(
+                                                        uiState.filter.customStartMillis,
+                                                        sel.timeInMillis
+                                                    )
+                                                },
+                                                cal.get(Calendar.YEAR),
+                                                cal.get(Calendar.MONTH),
+                                                cal.get(Calendar.DAY_OF_MONTH)
+                                            ).show()
+                                        },
+                                    color = PaoCreamLight,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, PaoBorder),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        Text("Data Fim", fontSize = 10.sp, color = PaoAnthraciteMuted)
+                                        Text(
+                                            DateTimeUtils.formatDate(uiState.filter.customEndMillis),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = PaoAnthracite
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Filtros de Turno (Todos, Manhã, Noite) e Preferencial
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            PeriodChip("Todos Turnos", isSelected = uiState.filter.selectedPeriod == null) {
+                            PeriodChip(
+                                title = "Todos Turnos",
+                                isSelected = uiState.filter.selectedPeriod == null
+                            ) {
                                 viewModel.setPeriodFilter(null)
                             }
-                            PeriodChip("Manhã", isSelected = uiState.filter.selectedPeriod == "MANHA") {
+                            PeriodChip(
+                                title = "Manhã",
+                                isSelected = uiState.filter.selectedPeriod == "MANHA"
+                            ) {
                                 viewModel.setPeriodFilter("MANHA")
                             }
-                            PeriodChip("Noite", isSelected = uiState.filter.selectedPeriod == "NOITE") {
+                            PeriodChip(
+                                title = "Noite",
+                                isSelected = uiState.filter.selectedPeriod == "NOITE"
+                            ) {
                                 viewModel.setPeriodFilter("NOITE")
                             }
                             PeriodChip(
@@ -358,6 +628,24 @@ fun AdminScreen(
                 }
             }
 
+            // Clientes por turno (Manhã e Noite)
+            item {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    AdminMetricCard(
+                        title = "Clientes Manhã",
+                        value = metrics.morningAttendances.toString(),
+                        subtitle = "Turno Manhã",
+                        modifier = Modifier.weight(1f)
+                    )
+                    AdminMetricCard(
+                        title = "Clientes Noite",
+                        value = metrics.nightAttendances.toString(),
+                        subtitle = "Turno Noite",
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
             // Distribution of new clients by origin
             item {
                 Card(
@@ -369,7 +657,7 @@ fun AdminScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            text = "Distribuição de Clientes por Origem",
+                            text = "De Onde Conheceram (Clientes Novos)",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = PaoAnthracite
@@ -395,7 +683,6 @@ fun AdminScreen(
                                     )
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
-                                // Visual bar
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -468,7 +755,7 @@ fun AdminScreen(
                 }
             }
 
-            // Turnos em Aberto (with warning for export blocking)
+            // Turnos em Aberto (com aviso se bloquear exportação)
             item {
                 Card(
                     modifier = Modifier
@@ -516,7 +803,7 @@ fun AdminScreen(
                             )
                         } else {
                             Text(
-                                text = "Turnos que ainda impedem a exportação consolidada:",
+                                text = "Turnos abertos que precisam ser encerrados antes do fechamento:",
                                 fontSize = 11.sp,
                                 color = PaoAnthraciteMuted
                             )
@@ -535,7 +822,11 @@ fun AdminScreen(
                                     ) {
                                         Column {
                                             Text(text = s.hosterName, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                            Text(text = "Turno ${s.period.displayName} • Aberto ${DateTimeUtils.formatTime(s.openedAt)}", fontSize = 11.sp, color = PaoAnthraciteMuted)
+                                            Text(
+                                                text = "Turno ${s.period.displayName} • Aberto ${DateTimeUtils.formatTime(s.openedAt)}",
+                                                fontSize = 11.sp,
+                                                color = PaoAnthraciteMuted
+                                            )
                                         }
                                         Text(text = "Aberto", fontSize = 11.sp, color = StatusAmber, fontWeight = FontWeight.Bold)
                                     }
@@ -560,7 +851,7 @@ fun AdminScreen(
                             Icon(Icons.Default.Download, contentDescription = null, tint = PaoRed, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Exportar Relatório Gerencial (.xlsx)",
+                                text = "Gerar Planilha Gerencial (.xlsx)",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = PaoAnthracite
@@ -568,14 +859,14 @@ fun AdminScreen(
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Gera uma planilha Excel com duas abas completas (Atendimentos e Clientes) de todos os hosters no período selecionado.",
+                            text = "Gera uma planilha Excel com 3 abas completas (Atendimentos, Clientes Detalhado e Resumo Diário & Origens com separação por dia e consolidação geral).",
                             fontSize = 12.sp,
                             color = PaoAnthraciteMuted
                         )
                         Spacer(modifier = Modifier.height(14.dp))
 
                         PaoPrimaryButton(
-                            text = "Gerar e Baixar XLSX",
+                            text = "Gerar Relatório XLSX",
                             onClick = { viewModel.exportExcel() },
                             isLoading = uiState.isExporting,
                             testTag = "btn_exportar_excel"
@@ -609,7 +900,7 @@ private fun PeriodChip(
             fontSize = 11.sp,
             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
             color = if (isSelected) Color.White else PaoAnthracite,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
         )
     }
 }
