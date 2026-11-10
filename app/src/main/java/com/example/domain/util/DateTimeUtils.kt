@@ -30,11 +30,35 @@ object DateTimeUtils {
     }
 
     fun fromIsoUtc(isoString: String): Long {
-        return try {
-            isoFormat.parse(isoString)?.time ?: System.currentTimeMillis()
-        } catch (_: Exception) {
-            System.currentTimeMillis()
+        if (isoString.isBlank()) return System.currentTimeMillis()
+        // Try Instant / OffsetDateTime if on API 26+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            try {
+                return java.time.OffsetDateTime.parse(isoString).toInstant().toEpochMilli()
+            } catch (_: Exception) {
+                try {
+                    return java.time.Instant.parse(isoString).toEpochMilli()
+                } catch (_: Exception) {}
+            }
         }
+        // Fallback with SimpleDateFormat
+        val patterns = arrayOf(
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+            "yyyy-MM-dd'T'HH:mm:ssXXX",
+            "yyyy-MM-dd'T'HH:mm:ss"
+        )
+        for (pattern in patterns) {
+            try {
+                val sdf = SimpleDateFormat(pattern, Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }
+                val parsed = sdf.parse(isoString)
+                if (parsed != null) return parsed.time
+            } catch (_: Exception) {}
+        }
+        return System.currentTimeMillis()
     }
 
     fun formatFileDate(timestamp: Long): String {

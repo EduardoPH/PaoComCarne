@@ -140,35 +140,36 @@ fun LoginScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Brand Badge & Identity (compact on keyboard focus)
+            // Official Brand Identity from Logo
             Surface(
                 modifier = Modifier
-                    .size(64.dp)
-                    .clip(CircleShape),
+                    .size(80.dp)
+                    .clip(RoundedCornerShape(20.dp)),
                 color = PaoRed,
-                shadowElevation = 3.dp
+                shadowElevation = 4.dp
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.Restaurant,
-                        contentDescription = "Logo Pão com Carne",
-                        tint = PaoCream,
-                        modifier = Modifier.size(34.dp)
-                    )
-                }
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.logo_pao_com_carne),
+                    contentDescription = "Logo Pão com Carne",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(6.dp),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             Text(
                 text = "Pão com Carne",
                 fontSize = 22.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.ExtraBold,
                 color = PaoAnthracite
             )
             Text(
                 text = "Sistema de Recepção",
                 fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
                 color = PaoAnthraciteMuted,
                 letterSpacing = 0.5.sp
             )

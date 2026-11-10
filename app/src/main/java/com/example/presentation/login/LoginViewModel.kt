@@ -38,9 +38,13 @@ class LoginViewModel(
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
 
     fun selectHoster(hoster: Hoster?) {
+        val isFirst = if (hoster != null) {
+            if (hoster.id == "admin" || hoster.isAdmin) false else !hoster.isActivated
+        } else false
+
         _uiState.value = _uiState.value.copy(
             selectedHoster = hoster,
-            isFirstAccess = if (hoster != null) !hoster.isActivated else false,
+            isFirstAccess = isFirst,
             password = "",
             confirmPassword = "",
             errorMessage = null
@@ -75,7 +79,9 @@ class LoginViewModel(
             return
         }
 
-        if (state.isFirstAccess) {
+        val isFirstAccess = if (hoster.id == "admin" || hoster.isAdmin) false else state.isFirstAccess
+
+        if (isFirstAccess) {
             if (state.password.length < 4) {
                 _uiState.value = state.copy(errorMessage = "A senha deve ter no mínimo 4 caracteres.")
                 return

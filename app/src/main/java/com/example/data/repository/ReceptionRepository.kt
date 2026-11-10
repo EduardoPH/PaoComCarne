@@ -200,12 +200,17 @@ class ReceptionRepository(
         attendanceDao.insertOrUpdateAttendance(attendanceEntity)
 
         val memberEntities = membersList.mapIndexed { index, m ->
+            val cleanOrigin = if (m.classification == ClientClassification.NOVO) {
+                m.origin?.trim()?.takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
             AttendanceMemberEntity(
                 id = UUID.randomUUID().toString(),
                 attendanceId = attendanceId,
                 memberNumber = index + 1,
                 classification = m.classification.name,
-                origin = if (m.classification == ClientClassification.NOVO) m.origin else null,
+                origin = cleanOrigin,
                 createdAt = now
             )
         }
@@ -247,7 +252,7 @@ class ReceptionRepository(
             )
         }
         val membersType = Types.newParameterizedType(List::class.java, SupabaseMemberDto::class.java)
-        val membersJson = SupabaseClient.moshi.adapter<List<SupabaseMemberDto>>(membersType).toJson(memberDtos)
+        val membersJson = SupabaseClient.moshi.adapter<List<SupabaseMemberDto>>(membersType).serializeNulls().toJson(memberDtos)
         syncQueueDao.enqueue(
             SyncQueueEntity(
                 entityType = "ATTENDANCE_MEMBERS",
@@ -328,12 +333,17 @@ class ReceptionRepository(
         // Replace members
         memberDao.deleteMembersForAttendance(attendanceId)
         val newMemberEntities = newMembersList.mapIndexed { index, m ->
+            val cleanOrigin = if (m.classification == ClientClassification.NOVO) {
+                m.origin?.trim()?.takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
             AttendanceMemberEntity(
                 id = UUID.randomUUID().toString(),
                 attendanceId = attendanceId,
                 memberNumber = index + 1,
                 classification = m.classification.name,
-                origin = if (m.classification == ClientClassification.NOVO) m.origin else null,
+                origin = cleanOrigin,
                 createdAt = now
             )
         }
@@ -391,7 +401,7 @@ class ReceptionRepository(
             )
         }
         val membersType = Types.newParameterizedType(List::class.java, SupabaseMemberDto::class.java)
-        val membersJson = SupabaseClient.moshi.adapter<List<SupabaseMemberDto>>(membersType).toJson(memberDtos)
+        val membersJson = SupabaseClient.moshi.adapter<List<SupabaseMemberDto>>(membersType).serializeNulls().toJson(memberDtos)
         syncQueueDao.enqueue(
             SyncQueueEntity(
                 entityType = "ATTENDANCE_MEMBERS",

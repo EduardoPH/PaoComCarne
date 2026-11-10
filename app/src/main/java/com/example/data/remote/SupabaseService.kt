@@ -33,6 +33,9 @@ interface SupabaseService {
         @Query("id") idFilter: String
     ): Response<ResponseBody>
 
+    @GET("rest/v1/shifts?select=*&order=opened_at.desc")
+    suspend fun getShifts(): Response<List<SupabaseShiftDto>>
+
     @POST("rest/v1/shifts")
     @Headers("Prefer: return=representation, resolution=merge-duplicates")
     suspend fun upsertShift(
@@ -45,6 +48,9 @@ interface SupabaseService {
         @Query("id") idFilter: String,
         @Body body: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
+
+    @GET("rest/v1/attendances?select=*&order=created_at.desc")
+    suspend fun getAttendances(): Response<List<SupabaseAttendanceDto>>
 
     @POST("rest/v1/attendances")
     @Headers("Prefer: return=representation, resolution=merge-duplicates")
@@ -59,11 +65,20 @@ interface SupabaseService {
         @Body body: Map<String, @JvmSuppressWildcards Any?>
     ): Response<ResponseBody>
 
+    @GET("rest/v1/attendance_members?select=*&order=created_at.asc")
+    suspend fun getAttendanceMembers(): Response<List<SupabaseMemberDto>>
+
     @POST("rest/v1/attendance_members")
     @Headers("Prefer: return=representation, resolution=merge-duplicates")
     suspend fun upsertMembers(
         @Body members: List<SupabaseMemberDto>
     ): Response<List<SupabaseMemberDto>>
+
+    @POST("rest/v1/attendance_members")
+    @Headers("Prefer: return=minimal, resolution=merge-duplicates")
+    suspend fun upsertMember(
+        @Body member: SupabaseMemberDto
+    ): Response<ResponseBody>
 
     @DELETE("rest/v1/attendance_members")
     suspend fun deleteMembersForAttendance(
@@ -75,6 +90,9 @@ interface SupabaseService {
     suspend fun insertAudit(
         @Body audit: SupabaseAuditDto
     ): Response<ResponseBody>
+
+    @GET("rest/v1/queue_events?select=*&order=created_at.desc")
+    suspend fun getQueueEvents(): Response<List<SupabaseQueueDto>>
 
     @POST("rest/v1/queue_events")
     @Headers("Prefer: return=minimal")

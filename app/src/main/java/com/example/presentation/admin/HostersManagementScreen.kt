@@ -134,18 +134,18 @@ fun HostersManagementScreen(
                     modifier = Modifier.weight(1f)
                 ) {
                     Surface(
-                        modifier = Modifier.size(42.dp),
-                        shape = CircleShape,
+                        modifier = Modifier.size(44.dp),
+                        shape = RoundedCornerShape(12.dp),
                         color = PaoRed
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.Shield,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.logo_pao_com_carne),
+                            contentDescription = "Pão com Carne",
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(4.dp),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                        )
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {

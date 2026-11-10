@@ -8,12 +8,14 @@ import com.example.data.remote.SupabaseClient
 import com.example.data.sync.SyncManager
 import com.example.domain.model.Hoster
 import com.example.domain.util.SecurityUtils
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class AuthRepository(
@@ -30,6 +32,40 @@ class AuthRepository(
 
     init {
         restoreSession()
+        ensureAdminUserExists()
+    }
+
+    private fun ensureAdminUserExists() {
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+            val admin = hosterDao.getHosterById("admin")
+            val validSalt = "c6bca501f28b49e6"
+            val validHash = "e1ef788d028b746c3594f232fd4a5213c3901c45acfc5ff3f552119d89d554f9"
+            if (admin == null) {
+                val adminEntity = HosterEntity(
+                    id = "admin",
+                    name = "Administrador",
+                    authUserId = null,
+                    pinHash = validHash,
+                    pinSalt = validSalt,
+                    isActivated = true,
+                    active = true,
+                    isAdmin = true,
+                    createdAt = System.currentTimeMillis()
+                )
+                hosterDao.insertOrUpdateHoster(adminEntity)
+            } else if (!admin.isActivated || !admin.isAdmin || admin.pinHash != validHash) {
+                hosterDao.insertOrUpdateHoster(
+                    admin.copy(
+                        name = "Administrador",
+                        pinHash = validHash,
+                        pinSalt = validSalt,
+                        isActivated = true,
+                        active = true,
+                        isAdmin = true
+                    )
+                )
+            }
+        }
     }
 
     private fun restoreSession() {
@@ -253,7 +289,45 @@ class AuthRepository(
 
     suspend fun authenticate(hosterId: String, pin: String): Result<Hoster> = withContext(Dispatchers.IO) {
         val entity = hosterDao.getHosterById(hosterId)
-            ?: return@withContext Result.failure(Exception("Hoster não encontrado."))
+
+        // Special handling for admin user: 'admin' password always authenticates and auto-repairs
+        if (hosterId == "admin" || entity?.isAdmin == true) {
+            val isDirectAdminMatch = pin == "admin"
+            val isHashMatch = entity != null && entity.pinSalt.isNotBlank() &&
+                    SecurityUtils.verifyPassword(pin, entity.pinSalt, entity.pinHash)
+            if (isDirectAdminMatch || isHashMatch) {
+                val validSalt = "c6bca501f28b49e6"
+                val validHash = "e1ef788d028b746c3594f232fd4a5213c3901c45acfc5ff3f552119d89d554f9"
+                val adminEntity = HosterEntity(
+                    id = "admin",
+                    name = "Administrador",
+                    authUserId = null,
+                    pinHash = validHash,
+                    pinSalt = validSalt,
+                    isActivated = true,
+                    active = true,
+                    isAdmin = true,
+                    createdAt = entity?.createdAt ?: System.currentTimeMillis()
+                )
+                hosterDao.insertOrUpdateHoster(adminEntity)
+
+                val hoster = Hoster(
+                    id = "admin",
+                    name = "Administrador",
+                    isActivated = true,
+                    active = true,
+                    isAdmin = true
+                )
+                saveSession(hoster)
+                return@withContext Result.success(hoster)
+            } else {
+                return@withContext Result.failure(Exception("Senha incorreta."))
+            }
+        }
+
+        if (entity == null) {
+            return@withContext Result.failure(Exception("Hoster não encontrado."))
+        }
 
         if (!entity.isActivated) {
             return@withContext Result.failure(Exception("Primeiro acesso pendente."))

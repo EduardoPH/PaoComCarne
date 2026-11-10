@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.Warning
+import com.example.domain.model.SyncState
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -122,37 +124,96 @@ fun ReceptionScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = hoster?.name ?: "Recepção",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = PaoAnthracite
-                    )
-                    if (shift != null) {
-                        Text(
-                            text = "Turno ${shift?.period?.displayName} • Aberto às ${DateTimeUtils.formatTime(shift?.openedAt ?: 0)}",
-                            fontSize = 12.sp,
-                            color = PaoAnthraciteMuted
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Surface(
+                        modifier = Modifier.size(38.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        color = PaoRed
+                    ) {
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.logo_pao_com_carne),
+                            contentDescription = "Pão com Carne",
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(3.dp),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Fit
                         )
-                    } else {
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
                         Text(
-                            text = "Nenhum turno em andamento",
-                            fontSize = 12.sp,
-                            color = StatusAmber,
-                            fontWeight = FontWeight.SemiBold
+                            text = hoster?.name ?: "Recepção",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PaoAnthracite
                         )
+                        if (shift != null) {
+                            Text(
+                                text = "Turno ${shift?.period?.displayName} • Aberto às ${DateTimeUtils.formatTime(shift?.openedAt ?: 0)}",
+                                fontSize = 12.sp,
+                                color = PaoAnthraciteMuted
+                            )
+                        } else {
+                            Text(
+                                text = "Nenhum turno em andamento",
+                                fontSize = 12.sp,
+                                color = StatusAmber,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
 
                 SyncStatusPill(
                     syncState = syncState,
-                    pendingCount = pendingCount,
-                    onClick = { viewModel.triggerSync() }
+                    pendingCount = pendingCount
                 )
             }
 
-            HorizontalDivider(color = PaoBorderLight, modifier = Modifier.padding(bottom = 14.dp))
+            HorizontalDivider(color = PaoBorderLight, modifier = Modifier.padding(bottom = 10.dp))
+
+            if (syncState != SyncState.SINCRONIZADO || pendingCount > 0) {
+                val opener = com.example.presentation.components.LocalSyncLogsOpener.current
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { opener() },
+                    color = StatusAmber.copy(alpha = 0.12f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, StatusAmber.copy(alpha = 0.35f)),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = StatusAmber,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "As informações podem estar desatualizadas, sincronize-as",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = PaoAnthracite,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = "Logs",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PaoRed
+                        )
+                    }
+                }
+            }
 
             if (shift == null) {
                 // No active shift state: prompt to open shift

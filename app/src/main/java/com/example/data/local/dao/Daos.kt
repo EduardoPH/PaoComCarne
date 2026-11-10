@@ -70,6 +70,9 @@ interface ShiftDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateShift(shift: ShiftEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrUpdateShifts(shifts: List<ShiftEntity>)
+
     @Update
     suspend fun updateShift(shift: ShiftEntity)
 }
@@ -99,6 +102,9 @@ interface AttendanceDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateAttendance(attendance: AttendanceEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrUpdateAttendances(attendances: List<AttendanceEntity>)
 
     @Query("SELECT COUNT(*) FROM attendances WHERE shiftId = :shiftId")
     suspend fun countAttendancesInShift(shiftId: String): Int
@@ -144,12 +150,21 @@ interface QueueEventDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertQueueEvent(event: QueueEventEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertQueueEvents(events: List<QueueEventEntity>)
 }
 
 @Dao
 interface SyncQueueDao {
-    @Query("SELECT * FROM sync_queue WHERE status IN ('PENDING', 'FAILED') ORDER BY createdAt ASC")
+    @Query("SELECT * FROM sync_queue WHERE status IN ('PENDING', 'FAILED', 'SYNCING') ORDER BY createdAt ASC")
     suspend fun getPendingOperations(): List<SyncQueueEntity>
+
+    @Query("SELECT * FROM sync_queue ORDER BY createdAt DESC")
+    fun getAllQueueFlow(): Flow<List<SyncQueueEntity>>
+
+    @Query("SELECT * FROM sync_queue ORDER BY createdAt DESC")
+    suspend fun getAllQueue(): List<SyncQueueEntity>
 
     @Query("SELECT COUNT(*) FROM sync_queue WHERE status IN ('PENDING', 'FAILED', 'SYNCING')")
     fun getPendingCountFlow(): Flow<Int>
@@ -168,4 +183,7 @@ interface SyncQueueDao {
 
     @Query("UPDATE sync_queue SET status = :newStatus WHERE id = :id")
     suspend fun updateStatus(id: Long, newStatus: String)
+
+    @Query("UPDATE sync_queue SET status = 'PENDING', attempts = 0 WHERE status = 'FAILED'")
+    suspend fun resetFailedToPending()
 }

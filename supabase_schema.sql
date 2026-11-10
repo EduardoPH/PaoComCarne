@@ -245,7 +245,7 @@ VALUES
     (
         'admin',
         'Administrador',
-        '10558b3cd1e3096b4ef84c7185038b3f2ec8d7ffef89c37021eb3b51ee2bc3d6',
+        'e1ef788d028b746c3594f232fd4a5213c3901c45acfc5ff3f552119d89d554f9',
         'c6bca501f28b49e6',
         true,
         true,

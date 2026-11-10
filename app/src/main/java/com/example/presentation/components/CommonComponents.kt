@@ -57,13 +57,21 @@ import com.example.ui.theme.StatusBlue
 import com.example.ui.theme.StatusGreen
 import com.example.ui.theme.StatusRed
 
+val LocalSyncLogsOpener = androidx.compose.runtime.compositionLocalOf<() -> Unit> { {} }
+
 @Composable
 fun SyncStatusPill(
     syncState: SyncState,
     pendingCount: Int,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val opener = LocalSyncLogsOpener.current
+    val effectiveClick: () -> Unit = {
+        opener.invoke()
+        onClick?.invoke()
+    }
+
     val (dotColor, icon, text) = when (syncState) {
         SyncState.SINCRONIZADO -> Triple(StatusGreen, Icons.Default.CloudDone, "Sincronizado")
         SyncState.OFFLINE -> Triple(StatusAmber, Icons.Default.CloudOff, "Modo Offline")
@@ -75,7 +83,7 @@ fun SyncStatusPill(
     Surface(
         modifier = modifier
             .clip(RoundedCornerShape(20.dp))
-            .clickable { onClick() }
+            .clickable { effectiveClick() }
             .testTag("sync_status_pill"),
         color = dotColor.copy(alpha = 0.12f),
         border = androidx.compose.foundation.BorderStroke(1.dp, dotColor.copy(alpha = 0.35f)),

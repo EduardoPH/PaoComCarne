@@ -79,6 +79,9 @@ class AdminViewModel(
     private val allAttendances = receptionRepository.getAllAttendancesFlow()
 
     init {
+        // Fetch all remote data into cache immediately
+        syncManager.triggerSync()
+
         viewModelScope.launch {
             combine(allShifts, allAttendances, _uiState) { shifts, attendances, state ->
                 computeMetrics(shifts, attendances, state.filter)
@@ -89,6 +92,10 @@ class AdminViewModel(
                 )
             }
         }
+    }
+
+    fun refreshRemoteData() {
+        syncManager.triggerSync()
     }
 
     private suspend fun computeMetrics(

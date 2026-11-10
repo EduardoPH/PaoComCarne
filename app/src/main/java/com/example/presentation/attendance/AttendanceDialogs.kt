@@ -169,16 +169,31 @@ fun NewAttendanceDialog(
 
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = "Novo Atendimento",
-                            fontSize = 18.sp,
+                            text = when (step) {
+                                1 -> "1. Formato"
+                                2 -> "2. Integrantes"
+                                else -> "3. Resumo & Confirmação"
+                            },
+                            fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             color = PaoAnthracite
                         )
-                        Text(
-                            text = "Etapa $step de 3",
-                            fontSize = 12.sp,
-                            color = PaoAnthraciteMuted
-                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            for (s in 1..3) {
+                                val isCurrentOrPassed = s <= step
+                                Surface(
+                                    modifier = Modifier
+                                        .width(if (s == step) 28.dp else 14.dp)
+                                        .height(4.dp),
+                                    shape = RoundedCornerShape(2.dp),
+                                    color = if (isCurrentOrPassed) PaoRed else PaoBorder
+                                ) {}
+                            }
+                        }
                     }
 
                     Box(modifier = Modifier.size(48.dp)) // balance space

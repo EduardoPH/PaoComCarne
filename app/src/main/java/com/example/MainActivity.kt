@@ -106,25 +106,37 @@ class MainActivity : ComponentActivity() {
                 val adminViewModel = remember { AdminViewModel(receptionRepo, exportRepo, syncMgr) }
 
                 val currentHoster by authRepo.currentHoster.collectAsState()
+                var showSyncLogsDialog by remember { mutableStateOf(false) }
 
-                if (currentHoster == null) {
-                    LoginScreen(
-                        viewModel = loginViewModel,
-                        onLoginSuccess = { }
-                    )
-                } else if (currentHoster?.isAdmin == true) {
-                    // Admin user has exclusive access to the Hosters Management Screen
-                    com.example.presentation.admin.HostersManagementScreen(
-                        authRepository = authRepo,
-                        syncManager = syncMgr,
-                        onLogout = { authRepo.logout() }
-                    )
-                } else {
-                    MainAppScaffold(
-                        receptionViewModel = receptionViewModel,
-                        adminViewModel = adminViewModel,
-                        onLogout = { authRepo.logout() }
-                    )
+                androidx.compose.runtime.CompositionLocalProvider(
+                    com.example.presentation.components.LocalSyncLogsOpener provides { showSyncLogsDialog = true }
+                ) {
+                    if (currentHoster == null) {
+                        LoginScreen(
+                            viewModel = loginViewModel,
+                            onLoginSuccess = { }
+                        )
+                    } else if (currentHoster?.isAdmin == true) {
+                        // Admin user has exclusive access to the Hosters Management Screen
+                        com.example.presentation.admin.HostersManagementScreen(
+                            authRepository = authRepo,
+                            syncManager = syncMgr,
+                            onLogout = { authRepo.logout() }
+                        )
+                    } else {
+                        MainAppScaffold(
+                            receptionViewModel = receptionViewModel,
+                            adminViewModel = adminViewModel,
+                            onLogout = { authRepo.logout() }
+                        )
+                    }
+
+                    if (showSyncLogsDialog) {
+                        com.example.presentation.components.SyncLogsDialog(
+                            syncManager = syncMgr,
+                            onDismiss = { showSyncLogsDialog = false }
+                        )
+                    }
                 }
             }
         }

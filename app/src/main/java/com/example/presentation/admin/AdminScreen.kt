@@ -43,6 +43,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import com.example.domain.model.SyncState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -119,9 +121,53 @@ fun AdminScreen(
 
                     SyncStatusPill(
                         syncState = syncState,
-                        pendingCount = pendingCount,
-                        onClick = { }
+                        pendingCount = pendingCount
                     )
+                }
+            }
+
+            // Banner de aviso sobre informações em cache e sincronização
+            if (syncState != SyncState.SINCRONIZADO || pendingCount > 0) {
+                item {
+                    val opener = com.example.presentation.components.LocalSyncLogsOpener.current
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { opener() },
+                        color = StatusAmber.copy(alpha = 0.12f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, StatusAmber.copy(alpha = 0.4f)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = StatusAmber,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "As informações podem estar desatualizadas, sincronize-as",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = PaoAnthracite
+                                )
+                                Text(
+                                    text = "Somando registros em cache com alterações locais.",
+                                    fontSize = 11.sp,
+                                    color = PaoAnthraciteMuted
+                                )
+                            }
+                            TextButton(onClick = { opener() }) {
+                                Text("Ver Logs", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PaoRed)
+                            }
+                        }
+                    }
                 }
             }
 
