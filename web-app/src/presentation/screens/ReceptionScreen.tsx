@@ -5,6 +5,7 @@ import {
   Hourglass,
   Pencil,
   Plus,
+  Trash2,
   Users,
   UsersRound,
 } from 'lucide-react';
@@ -22,6 +23,7 @@ import {
   SyncStatusPill,
 } from '../components/CommonComponents';
 import { CorrectionModal } from '../modals/CorrectionModal';
+import { DeleteAttendanceModal } from '../modals/DeleteAttendanceModal';
 import { NewAttendanceModal } from '../modals/NewAttendanceModal';
 import { ShiftSelectModal } from '../modals/ShiftSelectModal';
 import { UpdateQueueModal } from '../modals/UpdateQueueModal';
@@ -41,6 +43,7 @@ export function ReceptionScreen() {
   const [showNewAttendance, setShowNewAttendance] = useState(false);
   const [showUpdateQueue, setShowUpdateQueue] = useState(false);
   const [showCorrection, setShowCorrection] = useState(false);
+  const [attendanceToDelete, setAttendanceToDelete] = useState<AttendanceWithMembers | null>(null);
 
   const totalAtt = shiftAttendances.length;
   const totalPeople = shiftAttendances.reduce((s, a) => s + a.attendance.totalMembers, 0);
@@ -350,6 +353,7 @@ export function ReceptionScreen() {
             <LastAttendanceCard
               item={lastAttendance}
               onCorrect={() => setShowCorrection(true)}
+              onDelete={() => setAttendanceToDelete(lastAttendance)}
             />
           )}
         </div>
@@ -413,7 +417,8 @@ export function ReceptionScreen() {
               currentShift.id,
               currentHoster.id,
               duos,
-              groups
+              groups,
+              currentHoster.name
             );
             showSnackbar(res.ok ? 'Fila de espera atualizada!' : res.error);
           }}
@@ -448,6 +453,27 @@ export function ReceptionScreen() {
             });
             showSnackbar(
               res.ok ? 'Atendimento corrigido com sucesso! Auditoria registrada.' : res.error
+            );
+          }}
+        />
+      )}
+
+      {attendanceToDelete && currentHoster && (
+        <DeleteAttendanceModal
+          item={attendanceToDelete}
+          onDismiss={() => setAttendanceToDelete(null)}
+          onConfirmDelete={async (reason) => {
+            const targetId = attendanceToDelete.attendance.id;
+            setAttendanceToDelete(null);
+            const res = await receptionRepository.softDeleteAttendance({
+              attendanceId: targetId,
+              actorHosterId: currentHoster.id,
+              actorHosterName: currentHoster.name,
+              actorIsAdmin: currentHoster.isAdmin,
+              deletionReason: reason,
+            });
+            showSnackbar(
+              res.ok ? 'Atendimento excluído e métricas atualizadas.' : res.error
             );
           }}
         />
@@ -517,9 +543,11 @@ function StatChip({
 function LastAttendanceCard({
   item,
   onCorrect,
+  onDelete,
 }: {
   item: AttendanceWithMembers;
   onCorrect: () => void;
+  onDelete: () => void;
 }) {
   const att = item.attendance;
   const newMembersWithOrigin = item.members.filter(
@@ -602,30 +630,55 @@ function LastAttendanceCard({
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={onCorrect}
-        data-testid="btn_corrigir_ultimo"
-        className="tap-feedback"
-        style={{
-          marginTop: '10px',
-          width: '100%',
-          height: '38px',
-          borderRadius: '8px',
-          border: '1px solid #D97706',
-          backgroundColor: 'transparent',
-          color: '#D97706',
-          fontSize: '12px',
-          fontWeight: 700,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '6px',
-        }}
-      >
-        <Pencil size={14} color="#D97706" />
-        <span>Corrigir Último Atendimento</span>
-      </button>
+      <div style={{ marginTop: '10px', display: 'flex', gap: '8px' }}>
+        <button
+          type="button"
+          onClick={onCorrect}
+          data-testid="btn_corrigir_ultimo"
+          className="tap-feedback"
+          style={{
+            flex: 1,
+            height: '38px',
+            borderRadius: '8px',
+            border: '1px solid #D97706',
+            backgroundColor: 'transparent',
+            color: '#D97706',
+            fontSize: '12px',
+            fontWeight: 700,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '6px',
+          }}
+        >
+          <Pencil size={14} color="#D97706" />
+          <span>Corrigir</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onDelete}
+          data-testid="btn_excluir_ultimo"
+          className="tap-feedback"
+          style={{
+            flex: 1,
+            height: '38px',
+            borderRadius: '8px',
+            border: '1px solid var(--status-red)',
+            backgroundColor: 'transparent',
+            color: 'var(--status-red)',
+            fontSize: '12px',
+            fontWeight: 700,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '6px',
+          }}
+        >
+          <Trash2 size={14} color="#9C1819" />
+          <span>Excluir</span>
+        </button>
+      </div>
     </div>
   );
 }

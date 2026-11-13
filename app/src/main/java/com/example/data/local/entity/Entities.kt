@@ -45,7 +45,8 @@ data class ShiftEntity(
     indices = [
         Index(value = ["shiftId"]),
         Index(value = ["hosterId"]),
-        Index(value = ["createdAt"])
+        Index(value = ["createdAt"]),
+        Index(value = ["isDeleted"])
     ]
 )
 data class AttendanceEntity(
@@ -61,7 +62,11 @@ data class AttendanceEntity(
     val updatedAt: Long,
     val isEdited: Boolean,
     val isPreferential: Boolean = false,
-    val syncStatus: String
+    val syncStatus: String,
+    val isDeleted: Boolean = false,
+    val deletedAt: Long? = null,
+    val deletedBy: String? = null,
+    val deletionReason: String? = null
 )
 
 @Entity(
@@ -118,7 +123,7 @@ data class QueueEventEntity(
 )
 data class SyncQueueEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val entityType: String, // SHIFT, ATTENDANCE, MEMBER, AUDIT, QUEUE_EVENT, HOSTER_SETUP
+    val entityType: String, // SHIFT, ATTENDANCE, MEMBER, AUDIT, QUEUE_EVENT, HOSTER_SETUP, SYSTEM_LOG
     val entityId: String,
     val operation: String, // INSERT, UPDATE
     val payloadJson: String,
@@ -127,4 +132,47 @@ data class SyncQueueEntity(
     val lastError: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "system_logs",
+    indices = [
+        Index(value = ["createdAt"]),
+        Index(value = ["action"]),
+        Index(value = ["userId"]),
+        Index(value = ["result"]),
+        Index(value = ["deviceName"])
+    ]
+)
+data class SystemLogEntity(
+    @PrimaryKey val id: String,
+    val userId: String?,
+    val userName: String?,
+    val action: String,
+    val entityType: String,
+    val entityId: String?,
+    val deviceName: String,
+    val result: String, // SUCCESS or FAILURE
+    val description: String,
+    val createdAt: Long,
+    val syncedAt: Long? = null
+)
+
+@Entity(
+    tableName = "app_releases",
+    indices = [Index(value = ["active"]), Index(value = ["versionCode"])]
+)
+data class AppReleaseEntity(
+    @PrimaryKey val id: String,
+    val versionName: String,
+    val versionCode: Int,
+    val minSupportedCode: Int,
+    val mandatory: Boolean,
+    val apkPath: String,
+    val sha256: String,
+    val changelog: String,
+    val releaseReason: String,
+    val active: Boolean,
+    val createdAt: Long,
+    val confirmedAt: Long
 )

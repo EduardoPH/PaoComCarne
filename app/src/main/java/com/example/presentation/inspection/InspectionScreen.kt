@@ -1,5 +1,7 @@
 package com.example.presentation.inspection
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,20 +20,26 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Analytics
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,7 +50,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.domain.model.AttendanceWithMembers
 import com.example.domain.util.DateTimeUtils
+import com.example.presentation.attendance.DeleteAttendanceDialog
 import com.example.presentation.components.SyncStatusPill
+import com.example.presentation.components.motionDuration
+import com.example.presentation.components.rememberReducedMotion
 import com.example.presentation.reception.ReceptionViewModel
 import com.example.ui.theme.PaoAnthracite
 import com.example.ui.theme.PaoAnthraciteMuted
@@ -54,15 +65,28 @@ import com.example.ui.theme.PaoCreamLight
 import com.example.ui.theme.PaoRed
 import com.example.ui.theme.StatusAmber
 import com.example.ui.theme.StatusGreen
+import com.example.ui.theme.StatusRed
 
 @Composable
 fun InspectionScreen(
     viewModel: ReceptionViewModel
 ) {
+    val uiState by viewModel.uiState.collectAsState()
+    val hoster by viewModel.currentHoster.collectAsState()
     val shift by viewModel.currentShift.collectAsState()
     val attendances by viewModel.shiftAttendances.collectAsState()
     val syncState by viewModel.syncState.collectAsState()
     val pendingCount by viewModel.pendingCount.collectAsState()
+
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(uiState.feedbackMessage, uiState.errorMessage) {
+        val msg = uiState.feedbackMessage ?: uiState.errorMessage
+        if (msg != null) {
+            snackbarHostState.showSnackbar(msg)
+            viewModel.clearFeedback()
+        }
+    }
 
     val totalAtt = attendances.size
     val totalPeople = attendances.sumOf { it.attendance.totalMembers }
@@ -70,7 +94,8 @@ fun InspectionScreen(
     val returningCount = attendances.sumOf { it.attendance.returningMembers }
 
     Scaffold(
-        containerColor = PaoBackground
+        containerColor = PaoBackground,
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -227,19 +252,30 @@ fun InspectionScreen(
                             .fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        itemsIndexed(attendances) { index, item ->
+                        itemsIndexed(attendances, key = { _, it -> it.attendance.id }) { index, item ->
                             val isLast = index == attendances.size - 1
+                            val canDelete = hoster?.isAdmin == true || item.attendance.hosterId == hoster?.id
                             InspectionAttendanceCard(
                                 item = item,
                                 index = index + 1,
                                 isLast = isLast,
-                                onCorrect = { viewModel.setShowCorrection(true) }
+                                canDelete = canDelete,
+                                onCorrect = { viewModel.setShowCorrection(true) },
+                                onDelete = { viewModel.setAttendanceToDelete(item) }
                             )
                         }
                     }
                 }
             }
         }
+    }
+
+    if (uiState.attendancePendingDeletion != null) {
+        DeleteAttendanceDialog(
+            item = uiState.attendancePendingDeletion!!,
+            onDismiss = { viewModel.setAttendanceToDelete(null) },
+            onConfirmDelete = { reason -> viewModel.confirmDeleteAttendance(reason) }
+        )
     }
 }
 
@@ -281,12 +317,16 @@ private fun InspectionAttendanceCard(
     item: AttendanceWithMembers,
     index: Int,
     isLast: Boolean,
-    onCorrect: () -> Unit
+    canDelete: Boolean,
+    onCorrect: () -> Unit,
+    onDelete: () -> Unit
 ) {
     val att = item.attendance
+    val reducedMotion = rememberReducedMotion()
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize(animationSpec = tween(motionDuration(reducedMotion, 200)))
             .border(1.dp, PaoBorderLight, RoundedCornerShape(12.dp)),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(12.dp)
@@ -383,31 +423,58 @@ private fun InspectionAttendanceCard(
                 }
             }
 
-            if (isLast) {
+            if (isLast || canDelete) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
                 ) {
-                    OutlinedButton(
-                        onClick = onCorrect,
-                        modifier = Modifier.height(32.dp),
-                        shape = RoundedCornerShape(6.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, StatusAmber)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = null,
-                            tint = StatusAmber,
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Corrigir este último",
-                            fontSize = 11.sp,
-                            color = StatusAmber,
-                            fontWeight = FontWeight.Bold
-                        )
+                    if (isLast) {
+                        OutlinedButton(
+                            onClick = onCorrect,
+                            modifier = Modifier
+                                .height(36.dp)
+                                .testTag("btn_corrigir_inspecao_${att.id}"),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, StatusAmber),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = StatusAmber)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = null,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Corrigir",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    if (canDelete) {
+                        OutlinedButton(
+                            onClick = onDelete,
+                            modifier = Modifier
+                                .height(36.dp)
+                                .testTag("btn_excluir_inspecao_${att.id}"),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, StatusRed),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = StatusRed)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteOutline,
+                                contentDescription = null,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Excluir",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }

@@ -59,8 +59,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.repository.AuthRepository
+import com.example.data.repository.ReceptionRepository
 import com.example.data.sync.SyncManager
 import com.example.domain.model.Hoster
+import com.example.domain.model.LogResult
 import com.example.presentation.components.PaoPrimaryButton
 import com.example.presentation.components.SyncStatusPill
 import com.example.ui.theme.PaoAnthracite
@@ -79,13 +81,18 @@ import kotlinx.coroutines.launch
 @Composable
 fun HostersManagementScreen(
     authRepository: AuthRepository,
+    receptionRepository: ReceptionRepository? = null,
     syncManager: SyncManager,
     onLogout: () -> Unit
 ) {
     val hosters by authRepository.getActiveHostersFlow().collectAsState(initial = emptyList())
+    val allLogs by (receptionRepository?.getSystemLogsFlow() ?: kotlinx.coroutines.flow.flowOf(emptyList())).collectAsState(initial = emptyList())
     val syncState by syncManager.syncState.collectAsState()
     val pendingCount by syncManager.pendingCount.collectAsState()
     val scope = rememberCoroutineScope()
+
+    var showLogsTab by remember { mutableStateOf(false) }
+    var logsFilter by remember { mutableStateOf(SystemLogsFilterState()) }
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var hosterToEdit by remember { mutableStateOf<Hoster?>(null) }
@@ -96,22 +103,27 @@ fun HostersManagementScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showLogoutConfirmDialog by remember { mutableStateOf(false) }
 
-    // Android back button: prompt logout confirmation
     androidx.activity.compose.BackHandler {
-        showLogoutConfirmDialog = true
+        if (showLogsTab) {
+            showLogsTab = false
+        } else {
+            showLogoutConfirmDialog = true
+        }
     }
 
     Scaffold(
         containerColor = PaoBackground,
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showCreateDialog = true },
-                containerColor = PaoRed,
-                contentColor = Color.White,
-                shape = CircleShape,
-                modifier = Modifier.testTag("fab_add_hoster")
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Adicionar Hoster")
+            if (!showLogsTab) {
+                FloatingActionButton(
+                    onClick = { showCreateDialog = true },
+                    containerColor = PaoRed,
+                    contentColor = Color.White,
+                    shape = CircleShape,
+                    modifier = Modifier.testTag("fab_add_hoster")
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Adicionar Hoster")
+                }
             }
         }
     ) { innerPadding ->
@@ -205,97 +217,194 @@ fun HostersManagementScreen(
                 }
             }
 
-            HorizontalDivider(color = PaoBorderLight, modifier = Modifier.padding(bottom = 12.dp))
+            HorizontalDivider(color = PaoBorderLight, modifier = Modifier.padding(bottom = 10.dp))
 
-            if (actionMessage != null) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 10.dp)
-                        .clip(RoundedCornerShape(8.dp)),
-                    color = StatusGreen.copy(alpha = 0.12f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, StatusGreen.copy(alpha = 0.4f))
-                ) {
-                    Text(
-                        text = actionMessage ?: "",
-                        fontSize = 12.sp,
-                        color = PaoAnthracite,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(10.dp)
-                    )
-                }
-            }
-
-            if (errorMessage != null) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 10.dp)
-                        .clip(RoundedCornerShape(8.dp)),
-                    color = StatusRed.copy(alpha = 0.12f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, StatusRed.copy(alpha = 0.4f))
-                ) {
-                    Text(
-                        text = errorMessage ?: "",
-                        fontSize = 12.sp,
-                        color = StatusRed,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(10.dp)
-                    )
-                }
-            }
-
-            // Info Card
-            Card(
+            // Subtab switcher: Hosters | Logs do Sistema
+            Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, PaoBorderLight, RoundedCornerShape(12.dp)),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                    .padding(bottom = 12.dp),
+                color = Color.White,
+                border = androidx.compose.foundation.BorderStroke(1.dp, PaoBorder),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier.padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Sync,
-                        contentDescription = null,
-                        tint = PaoRed,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "Todas as inclusões, edições e exclusões são salvas localmente e sincronizadas no Supabase em tempo real.",
-                        fontSize = 12.sp,
-                        color = PaoAnthraciteMuted
-                    )
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { showLogsTab = false },
+                        color = if (!showLogsTab) PaoRed else Color.Transparent,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 8.dp)) {
+                            Text(
+                                text = "Hosters",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (!showLogsTab) Color.White else PaoAnthraciteMuted
+                            )
+                        }
+                    }
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { showLogsTab = true },
+                        color = if (showLogsTab) PaoRed else Color.Transparent,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 8.dp)) {
+                            Text(
+                                text = "Logs do Sistema (${allLogs.size})",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (showLogsTab) Color.White else PaoAnthraciteMuted
+                            )
+                        }
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            if (showLogsTab) {
+                val availableUsers = remember(allLogs) {
+                    allLogs.mapNotNull { it.userName?.takeIf { n -> n.isNotBlank() } }.distinct().sorted()
+                }
+                val availableActions = remember(allLogs) {
+                    allLogs.map { it.action }.distinct().sorted()
+                }
+                val availableDevices = remember(allLogs) {
+                    allLogs.map { it.deviceName }.distinct().sorted()
+                }
+                val filteredLogs = remember(allLogs, logsFilter) {
+                    allLogs.filter { item ->
+                        (logsFilter.startMillis == null || item.createdAt >= logsFilter.startMillis!!) &&
+                            (logsFilter.endMillis == null || item.createdAt <= logsFilter.endMillis!!) &&
+                            (logsFilter.selectedUser == null || item.userName == logsFilter.selectedUser) &&
+                            (logsFilter.selectedAction == null || item.action == logsFilter.selectedAction) &&
+                            (logsFilter.selectedDevice == null || item.deviceName == logsFilter.selectedDevice) &&
+                            (logsFilter.selectedResult == null || item.result == logsFilter.selectedResult)
+                    }
+                }
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    item {
+                        SystemLogsFilterCard(
+                            filter = logsFilter,
+                            availableUsers = availableUsers,
+                            availableActions = availableActions,
+                            availableDevices = availableDevices,
+                            onStartDateChange = { logsFilter = logsFilter.copy(startMillis = it) },
+                            onEndDateChange = { logsFilter = logsFilter.copy(endMillis = it) },
+                            onUserChange = { logsFilter = logsFilter.copy(selectedUser = it) },
+                            onActionChange = { logsFilter = logsFilter.copy(selectedAction = it) },
+                            onDeviceChange = { logsFilter = logsFilter.copy(selectedDevice = it) },
+                            onResultChange = { logsFilter = logsFilter.copy(selectedResult = it) },
+                            onClearFilters = { logsFilter = SystemLogsFilterState() }
+                        )
+                    }
+                    items(filteredLogs, key = { it.id }) { logItem ->
+                        SystemLogItemCard(log = logItem)
+                    }
+                }
+            } else {
+                if (actionMessage != null) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                        color = StatusGreen.copy(alpha = 0.12f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, StatusGreen.copy(alpha = 0.4f))
+                    ) {
+                        Text(
+                            text = actionMessage ?: "",
+                            fontSize = 12.sp,
+                            color = PaoAnthracite,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
 
-            Text(
-                text = "Hosters Cadastrados (${hosters.size})",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                color = PaoAnthracite
-            )
+                if (errorMessage != null) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                        color = StatusRed.copy(alpha = 0.12f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, StatusRed.copy(alpha = 0.4f))
+                    ) {
+                        Text(
+                            text = errorMessage ?: "",
+                            fontSize = 12.sp,
+                            color = StatusRed,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
 
-            Spacer(modifier = Modifier.height(8.dp))
+                // Info Card
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, PaoBorderLight, RoundedCornerShape(12.dp)),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Sync,
+                            contentDescription = null,
+                            tint = PaoRed,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Todas as inclusões, edições e exclusões são salvas localmente e sincronizadas no Supabase em tempo real.",
+                            fontSize = 12.sp,
+                            color = PaoAnthraciteMuted
+                        )
+                    }
+                }
 
-            LazyColumn(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(hosters) { hoster ->
-                    HosterItemCard(
-                        hoster = hoster,
-                        onEdit = { hosterToEdit = hoster },
-                        onResetPin = { hosterToResetPin = hoster },
-                        onDelete = { hosterToDelete = hoster }
-                    )
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Text(
+                    text = "Hosters Cadastrados (${hosters.size})",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = PaoAnthracite
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(hosters) { hoster ->
+                        HosterItemCard(
+                            hoster = hoster,
+                            onEdit = { hosterToEdit = hoster },
+                            onResetPin = { hosterToResetPin = hoster },
+                            onDelete = { hosterToDelete = hoster }
+                        )
+                    }
                 }
             }
 

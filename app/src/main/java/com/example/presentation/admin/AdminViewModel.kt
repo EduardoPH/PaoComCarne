@@ -8,18 +8,21 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.repository.ExportRepository
 import com.example.data.repository.ExportResult
 import com.example.data.repository.ReceptionRepository
+import com.example.data.repository.SystemLogRepository
 import com.example.data.sync.SyncManager
 import com.example.domain.model.Attendance
 import com.example.domain.model.AttendanceMember
+import com.example.domain.model.Hoster
+import com.example.domain.model.LogResult
 import com.example.domain.model.Shift
 import com.example.domain.model.SyncState
+import com.example.domain.model.SystemLog
+import com.example.domain.model.SystemLogActions
 import com.example.domain.util.DateTimeUtils
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Calendar
@@ -29,17 +32,23 @@ enum class DateFilterOption(val label: String) {
     ONTEM("Ontem"),
     ULTIMOS_7_DIAS("Últimos 7 dias"),
     ULTIMOS_30_DIAS("Últimos 30 dias"),
-    MES_ATUAL("Mês atual"),
-    DIA_ESPECIFICO("Dia específico"),
-    INTERVALO_PERSONALIZADO("Início e Fim"),
+    MES_ATUAL("Este mês"),
+    MES_ANTERIOR("Mês anterior"),
+    INTERVALO_PERSONALIZADO("Personalizado"),
     TODOS("Todo o período")
+}
+
+enum class AdminSubTab(val label: String) {
+    INDICADORES("Indicadores & Relatórios"),
+    LOGS("Logs do Sistema")
 }
 
 data class AdminFilterState(
     val dateOption: DateFilterOption = DateFilterOption.HOJE,
-    val specificDateMillis: Long = System.currentTimeMillis(),
-    val customStartMillis: Long = System.currentTimeMillis() - 7 * 86400000L,
-    val customEndMillis: Long = System.currentTimeMillis(),
+    val draftStartMillis: Long = AdminDateCalculator.startOfDay(System.currentTimeMillis()),
+    val draftEndMillis: Long = AdminDateCalculator.endOfDay(System.currentTimeMillis()),
+    val appliedStartMillis: Long = AdminDateCalculator.startOfDay(System.currentTimeMillis()),
+    val appliedEndMillis: Long = AdminDateCalculator.endOfDay(System.currentTimeMillis()),
     val selectedHosterId: String? = null,
     val selectedPeriod: String? = null, // "MANHA", "NOITE", or null (Todos)
     val selectedOrigin: String? = null,
@@ -70,180 +79,117 @@ data class AdminMetrics(
 )
 
 data class AdminUiState(
+    val activeSubTab: AdminSubTab = AdminSubTab.INDICADORES,
     val filter: AdminFilterState = AdminFilterState(),
+    val activePeriodSummary: String = "Hoje",
+    val dateValidationError: String? = null,
     val metrics: AdminMetrics = AdminMetrics(),
+    val availableHosters: List<Hoster> = emptyList(),
     val openShifts: List<Shift> = emptyList(),
+    val logsFilter: SystemLogsFilterState = SystemLogsFilterState(),
+    val filteredLogs: List<SystemLog> = emptyList(),
+    val availableLogUsers: List<String> = emptyList(),
+    val availableLogActions: List<String> = emptyList(),
+    val availableLogDevices: List<String> = emptyList(),
     val isExporting: Boolean = false,
     val exportSuccessData: ExportSuccessData? = null,
     val exportErrorMessage: String? = null
 )
 
-class AdminViewModel(
-    private val receptionRepository: ReceptionRepository,
-    private val exportRepository: ExportRepository,
-    private val syncManager: SyncManager
-) : ViewModel() {
+object AdminDateCalculator {
+    fun startOfDay(millis: Long): Long {
+        val cal = Calendar.getInstance().apply {
+            timeInMillis = millis
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        return cal.timeInMillis
+    }
 
-    val syncState: StateFlow<SyncState> = syncManager.syncState
-    val pendingCount: StateFlow<Int> = syncManager.pendingCount
+    fun endOfDay(millis: Long): Long {
+        val cal = Calendar.getInstance().apply {
+            timeInMillis = millis
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+        }
+        return cal.timeInMillis
+    }
 
-    private val _uiState = MutableStateFlow(AdminUiState())
-    val uiState: StateFlow<AdminUiState> = _uiState.asStateFlow()
-
-    private val allShifts = receptionRepository.getAllShiftsFlow()
-    private val allAttendances = receptionRepository.getAllAttendancesFlow()
-
-    init {
-        // Fetch all remote data into cache immediately
-        syncManager.triggerSync()
-
-        viewModelScope.launch {
-            combine(allShifts, allAttendances, _uiState) { shifts, attendances, state ->
-                computeMetrics(shifts, attendances, state.filter)
-            }.collect { (metrics, openShiftsList) ->
-                _uiState.value = _uiState.value.copy(
-                    metrics = metrics,
-                    openShifts = openShiftsList
-                )
-            }
+    fun validateDateRange(startMillis: Long, endMillis: Long): String? {
+        return if (startOfDay(startMillis) > startOfDay(endMillis)) {
+            "A data inicial não pode ser posterior à data final."
+        } else {
+            null
         }
     }
 
-    fun refreshRemoteData() {
-        syncManager.triggerSync()
-    }
-
-    private fun calculateDateRange(filter: AdminFilterState): Pair<Long, Long> {
-        val cal = Calendar.getInstance()
-        return when (filter.dateOption) {
+    fun rangeForOption(
+        option: DateFilterOption,
+        customStart: Long,
+        customEnd: Long,
+        referenceMillis: Long = System.currentTimeMillis()
+    ): Pair<Long, Long> {
+        val cal = Calendar.getInstance().apply { timeInMillis = referenceMillis }
+        return when (option) {
             DateFilterOption.HOJE -> {
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                val start = cal.timeInMillis
-                cal.set(Calendar.HOUR_OF_DAY, 23)
-                cal.set(Calendar.MINUTE, 59)
-                cal.set(Calendar.SECOND, 59)
-                cal.set(Calendar.MILLISECOND, 999)
-                Pair(start, cal.timeInMillis)
+                startOfDay(referenceMillis) to endOfDay(referenceMillis)
             }
             DateFilterOption.ONTEM -> {
                 cal.add(Calendar.DAY_OF_YEAR, -1)
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                val start = cal.timeInMillis
-                cal.set(Calendar.HOUR_OF_DAY, 23)
-                cal.set(Calendar.MINUTE, 59)
-                cal.set(Calendar.SECOND, 59)
-                cal.set(Calendar.MILLISECOND, 999)
-                Pair(start, cal.timeInMillis)
+                startOfDay(cal.timeInMillis) to endOfDay(cal.timeInMillis)
             }
             DateFilterOption.ULTIMOS_7_DIAS -> {
-                cal.set(Calendar.HOUR_OF_DAY, 23)
-                cal.set(Calendar.MINUTE, 59)
-                cal.set(Calendar.SECOND, 59)
-                cal.set(Calendar.MILLISECOND, 999)
-                val end = cal.timeInMillis
+                val end = endOfDay(referenceMillis)
                 cal.add(Calendar.DAY_OF_YEAR, -6)
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                Pair(cal.timeInMillis, end)
+                startOfDay(cal.timeInMillis) to end
             }
             DateFilterOption.ULTIMOS_30_DIAS -> {
-                cal.set(Calendar.HOUR_OF_DAY, 23)
-                cal.set(Calendar.MINUTE, 59)
-                cal.set(Calendar.SECOND, 59)
-                cal.set(Calendar.MILLISECOND, 999)
-                val end = cal.timeInMillis
+                val end = endOfDay(referenceMillis)
                 cal.add(Calendar.DAY_OF_YEAR, -29)
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                Pair(cal.timeInMillis, end)
+                startOfDay(cal.timeInMillis) to end
             }
             DateFilterOption.MES_ATUAL -> {
                 cal.set(Calendar.DAY_OF_MONTH, 1)
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                val start = cal.timeInMillis
-
+                val start = startOfDay(cal.timeInMillis)
                 cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH))
-                cal.set(Calendar.HOUR_OF_DAY, 23)
-                cal.set(Calendar.MINUTE, 59)
-                cal.set(Calendar.SECOND, 59)
-                cal.set(Calendar.MILLISECOND, 999)
-                Pair(start, cal.timeInMillis)
+                start to endOfDay(cal.timeInMillis)
             }
-            DateFilterOption.DIA_ESPECIFICO -> {
-                cal.timeInMillis = filter.specificDateMillis
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                val start = cal.timeInMillis
-                cal.set(Calendar.HOUR_OF_DAY, 23)
-                cal.set(Calendar.MINUTE, 59)
-                cal.set(Calendar.SECOND, 59)
-                cal.set(Calendar.MILLISECOND, 999)
-                Pair(start, cal.timeInMillis)
+            DateFilterOption.MES_ANTERIOR -> {
+                cal.add(Calendar.MONTH, -1)
+                cal.set(Calendar.DAY_OF_MONTH, 1)
+                val start = startOfDay(cal.timeInMillis)
+                cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH))
+                start to endOfDay(cal.timeInMillis)
             }
             DateFilterOption.INTERVALO_PERSONALIZADO -> {
-                cal.timeInMillis = filter.customStartMillis
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                val start = cal.timeInMillis
-
-                cal.timeInMillis = filter.customEndMillis
-                cal.set(Calendar.HOUR_OF_DAY, 23)
-                cal.set(Calendar.MINUTE, 59)
-                cal.set(Calendar.SECOND, 59)
-                cal.set(Calendar.MILLISECOND, 999)
-                Pair(start, cal.timeInMillis)
+                startOfDay(customStart) to endOfDay(customEnd)
             }
             DateFilterOption.TODOS -> {
-                Pair(0L, Long.MAX_VALUE)
+                0L to Long.MAX_VALUE
             }
         }
     }
 
-    private fun getPeriodDisplayLabel(filter: AdminFilterState): String {
-        val periodStr = when (filter.selectedPeriod) {
-            "MANHA" -> " (Turno Manhã)"
-            "NOITE" -> " (Turno Noite)"
-            else -> ""
-        }
-        return when (filter.dateOption) {
-            DateFilterOption.HOJE -> "Hoje$periodStr"
-            DateFilterOption.ONTEM -> "Ontem$periodStr"
-            DateFilterOption.ULTIMOS_7_DIAS -> "Últimos 7 dias$periodStr"
-            DateFilterOption.ULTIMOS_30_DIAS -> "Últimos 30 dias$periodStr"
-            DateFilterOption.MES_ATUAL -> "Mês atual$periodStr"
-            DateFilterOption.DIA_ESPECIFICO -> "${DateTimeUtils.formatDate(filter.specificDateMillis)}$periodStr"
-            DateFilterOption.INTERVALO_PERSONALIZADO -> "${DateTimeUtils.formatDate(filter.customStartMillis)} até ${DateTimeUtils.formatDate(filter.customEndMillis)}$periodStr"
-            DateFilterOption.TODOS -> "Todo o período$periodStr"
-        }
-    }
-
-    private suspend fun computeMetrics(
+    fun computeMetrics(
         shifts: List<Shift>,
         attendances: List<Attendance>,
+        allMembers: List<AttendanceMember>,
         filter: AdminFilterState
     ): Pair<AdminMetrics, List<Shift>> {
-        val (startMillis, endMillis) = calculateDateRange(filter)
+        val (startMillis, endMillis) = rangeForOption(
+            option = filter.dateOption,
+            customStart = filter.appliedStartMillis,
+            customEnd = filter.appliedEndMillis
+        )
         val shiftsById = shifts.associateBy { it.id }
+        val membersByAttendance = allMembers.groupBy { it.attendanceId }
 
-        // Filter attendances
         val filtered = attendances.filter { att ->
+            if (att.isDeleted) return@filter false
             val matchDate = att.createdAt in startMillis..endMillis
             val matchHoster = filter.selectedHosterId == null || att.hosterId == filter.selectedHosterId
             val shift = shiftsById[att.shiftId]
@@ -254,18 +200,21 @@ class AdminViewModel(
                 else -> true
             }
             val matchPref = !filter.preferentialOnly || att.isPreferential
-            matchDate && matchHoster && matchPeriod && matchClass && matchPref
+            val members = membersByAttendance[att.id].orEmpty()
+            val matchOrigin = filter.selectedOrigin == null || members.any {
+                it.classification.name == "NOVO" && it.origin.equals(filter.selectedOrigin, ignoreCase = true)
+            }
+            matchDate && matchHoster && matchPeriod && matchClass && matchPref && matchOrigin
         }
-
-        val allMembers = receptionRepository.getAllMembers()
-        val membersByAttendance = allMembers.groupBy { it.attendanceId }
 
         val originDist = mutableMapOf<String, Int>()
         filtered.forEach { att ->
             val members = membersByAttendance[att.id].orEmpty()
             members.forEach { m ->
                 if (m.classification.name == "NOVO" && !m.origin.isNullOrBlank()) {
-                    originDist[m.origin] = (originDist[m.origin] ?: 0) + 1
+                    if (filter.selectedOrigin == null || m.origin.equals(filter.selectedOrigin, ignoreCase = true)) {
+                        originDist[m.origin] = (originDist[m.origin] ?: 0) + 1
+                    }
                 }
             }
         }
@@ -302,56 +251,274 @@ class AdminViewModel(
             closedShiftsCount = closedShifts.size
         )
 
-        return Pair(metrics, openShifts)
+        return metrics to openShifts
+    }
+}
+
+class AdminViewModel(
+    private val receptionRepository: ReceptionRepository,
+    private val exportRepository: ExportRepository,
+    private val syncManager: SyncManager,
+    private val systemLogRepository: SystemLogRepository? = null
+) : ViewModel() {
+
+    val syncState: StateFlow<SyncState> = syncManager.syncState
+    val pendingCount: StateFlow<Int> = syncManager.pendingCount
+
+    private val _uiState = MutableStateFlow(AdminUiState())
+    val uiState: StateFlow<AdminUiState> = _uiState.asStateFlow()
+
+    private val filterFlow = MutableStateFlow(AdminFilterState())
+    private val logsFilterFlow = MutableStateFlow(SystemLogsFilterState())
+
+    private val allShifts = receptionRepository.getAllShiftsFlow()
+    private val allAttendances = receptionRepository.getAllAttendancesFlow()
+    private val allMembers = receptionRepository.getAllMembersFlow()
+    private val activeHosters = receptionRepository.getActiveHostersFlow()
+    private val allLogs = receptionRepository.getSystemLogsFlow()
+
+    private var hasLoggedAdminAccess = false
+
+    init {
+        syncManager.triggerSync()
+
+        viewModelScope.launch {
+            combine(
+                allShifts,
+                allAttendances,
+                allMembers,
+                activeHosters,
+                filterFlow
+            ) { shifts, attendances, members, hosters, filter ->
+                val (metrics, openShifts) = AdminDateCalculator.computeMetrics(
+                    shifts = shifts,
+                    attendances = attendances,
+                    allMembers = members,
+                    filter = filter
+                )
+                Triple(metrics, openShifts, hosters)
+            }.collect { (metrics, openShifts, hosters) ->
+                val currentFilter = filterFlow.value
+                _uiState.value = _uiState.value.copy(
+                    filter = currentFilter,
+                    activePeriodSummary = getPeriodDisplayLabel(currentFilter),
+                    metrics = metrics,
+                    openShifts = openShifts,
+                    availableHosters = hosters
+                )
+            }
+        }
+
+        viewModelScope.launch {
+            combine(allLogs, logsFilterFlow) { logs, lFilter ->
+                val users = logs.mapNotNull { it.userName?.takeIf { n -> n.isNotBlank() } }.distinct().sorted()
+                val actions = logs.map { it.action }.distinct().sorted()
+                val devices = logs.map { it.deviceName }.distinct().sorted()
+                val filtered = logs.filter { item ->
+                    val matchStart = lFilter.startMillis == null || item.createdAt >= lFilter.startMillis
+                    val matchEnd = lFilter.endMillis == null || item.createdAt <= lFilter.endMillis
+                    val matchUser = lFilter.selectedUser == null || item.userName == lFilter.selectedUser
+                    val matchAction = lFilter.selectedAction == null || item.action == lFilter.selectedAction
+                    val matchDevice = lFilter.selectedDevice == null || item.deviceName == lFilter.selectedDevice
+                    val matchResult = lFilter.selectedResult == null || item.result == lFilter.selectedResult
+                    matchStart && matchEnd && matchUser && matchAction && matchDevice && matchResult
+                }
+                Triple(filtered, Triple(users, actions, devices), lFilter)
+            }.collect { (filtered, meta, lFilter) ->
+                _uiState.value = _uiState.value.copy(
+                    logsFilter = lFilter,
+                    filteredLogs = filtered,
+                    availableLogUsers = meta.first,
+                    availableLogActions = meta.second,
+                    availableLogDevices = meta.third
+                )
+            }
+        }
     }
 
-    fun togglePreferentialFilter() {
-        _uiState.value = _uiState.value.copy(
-            filter = _uiState.value.filter.copy(preferentialOnly = !_uiState.value.filter.preferentialOnly)
-        )
-    }
-
-    fun setDateFilter(opt: DateFilterOption) {
-        _uiState.value = _uiState.value.copy(
-            filter = _uiState.value.filter.copy(dateOption = opt)
-        )
-    }
-
-    fun setSpecificDate(millis: Long) {
-        _uiState.value = _uiState.value.copy(
-            filter = _uiState.value.filter.copy(
-                dateOption = DateFilterOption.DIA_ESPECIFICO,
-                specificDateMillis = millis
+    fun onAdminScreenOpened(actorId: String? = null, actorName: String? = null) {
+        if (!hasLoggedAdminAccess) {
+            hasLoggedAdminAccess = true
+            systemLogRepository?.logAsync(
+                action = SystemLogActions.ADMIN_ACCESS,
+                entityType = "ADMIN",
+                result = LogResult.SUCCESS,
+                description = "Acesso ao painel Administrativo.",
+                userId = actorId,
+                userName = actorName
             )
+        }
+    }
+
+    fun setSubTab(tab: AdminSubTab) {
+        _uiState.value = _uiState.value.copy(activeSubTab = tab)
+    }
+
+    fun refreshRemoteData() {
+        syncManager.triggerSync()
+    }
+
+    private fun getPeriodDisplayLabel(filter: AdminFilterState): String {
+        val periodStr = when (filter.selectedPeriod) {
+            "MANHA" -> " • Turno Manhã"
+            "NOITE" -> " • Turno Noite"
+            else -> ""
+        }
+        val base = when (filter.dateOption) {
+            DateFilterOption.HOJE -> "Hoje (${DateTimeUtils.formatDate(filter.appliedStartMillis)})"
+            DateFilterOption.ONTEM -> "Ontem (${DateTimeUtils.formatDate(filter.appliedStartMillis)})"
+            DateFilterOption.ULTIMOS_7_DIAS -> "Últimos 7 dias (${DateTimeUtils.formatDate(filter.appliedStartMillis)} - ${DateTimeUtils.formatDate(filter.appliedEndMillis)})"
+            DateFilterOption.ULTIMOS_30_DIAS -> "Últimos 30 dias (${DateTimeUtils.formatDate(filter.appliedStartMillis)} - ${DateTimeUtils.formatDate(filter.appliedEndMillis)})"
+            DateFilterOption.MES_ATUAL -> "Este mês (${DateTimeUtils.formatDate(filter.appliedStartMillis)} - ${DateTimeUtils.formatDate(filter.appliedEndMillis)})"
+            DateFilterOption.MES_ANTERIOR -> "Mês anterior (${DateTimeUtils.formatDate(filter.appliedStartMillis)} - ${DateTimeUtils.formatDate(filter.appliedEndMillis)})"
+            DateFilterOption.INTERVALO_PERSONALIZADO -> "${DateTimeUtils.formatDate(filter.appliedStartMillis)} até ${DateTimeUtils.formatDate(filter.appliedEndMillis)}"
+            DateFilterOption.TODOS -> "Todo o período"
+        }
+        return "$base$periodStr"
+    }
+
+    fun setDraftStartDate(millis: Long) {
+        val cleanStart = AdminDateCalculator.startOfDay(millis)
+        val err = AdminDateCalculator.validateDateRange(cleanStart, filterFlow.value.draftEndMillis)
+        _uiState.value = _uiState.value.copy(dateValidationError = err)
+        filterFlow.value = filterFlow.value.copy(
+            dateOption = DateFilterOption.INTERVALO_PERSONALIZADO,
+            draftStartMillis = cleanStart
         )
     }
 
-    fun setCustomDateRange(startMillis: Long, endMillis: Long) {
-        _uiState.value = _uiState.value.copy(
-            filter = _uiState.value.filter.copy(
-                dateOption = DateFilterOption.INTERVALO_PERSONALIZADO,
-                customStartMillis = startMillis,
-                customEndMillis = endMillis
-            )
+    fun setDraftEndDate(millis: Long) {
+        val cleanEnd = AdminDateCalculator.endOfDay(millis)
+        val err = AdminDateCalculator.validateDateRange(filterFlow.value.draftStartMillis, cleanEnd)
+        _uiState.value = _uiState.value.copy(dateValidationError = err)
+        filterFlow.value = filterFlow.value.copy(
+            dateOption = DateFilterOption.INTERVALO_PERSONALIZADO,
+            draftEndMillis = cleanEnd
         )
+    }
+
+    fun applyDraftFilters(actorId: String? = null, actorName: String? = null) {
+        val current = filterFlow.value
+        val err = AdminDateCalculator.validateDateRange(current.draftStartMillis, current.draftEndMillis)
+        if (err != null) {
+            _uiState.value = _uiState.value.copy(dateValidationError = err)
+            return
+        }
+        _uiState.value = _uiState.value.copy(dateValidationError = null)
+        val updated = current.copy(
+            dateOption = if (current.dateOption == DateFilterOption.TODOS) {
+                DateFilterOption.INTERVALO_PERSONALIZADO
+            } else {
+                current.dateOption
+            },
+            appliedStartMillis = AdminDateCalculator.startOfDay(current.draftStartMillis),
+            appliedEndMillis = AdminDateCalculator.endOfDay(current.draftEndMillis)
+        )
+        filterFlow.value = updated
+        logFilterApplied(updated, actorId, actorName)
+    }
+
+    fun setDateFilter(opt: DateFilterOption, actorId: String? = null, actorName: String? = null) {
+        val current = filterFlow.value
+        val (start, end) = AdminDateCalculator.rangeForOption(
+            option = opt,
+            customStart = current.draftStartMillis,
+            customEnd = current.draftEndMillis
+        )
+        _uiState.value = _uiState.value.copy(dateValidationError = null)
+        val updated = if (opt == DateFilterOption.TODOS) {
+            current.copy(
+                dateOption = opt,
+                appliedStartMillis = 0L,
+                appliedEndMillis = Long.MAX_VALUE
+            )
+        } else {
+            current.copy(
+                dateOption = opt,
+                draftStartMillis = start,
+                draftEndMillis = end,
+                appliedStartMillis = start,
+                appliedEndMillis = end
+            )
+        }
+        filterFlow.value = updated
+        logFilterApplied(updated, actorId, actorName)
+    }
+
+    fun clearAllFilters(actorId: String? = null, actorName: String? = null) {
+        val today = System.currentTimeMillis()
+        val start = AdminDateCalculator.startOfDay(today)
+        val end = AdminDateCalculator.endOfDay(today)
+        _uiState.value = _uiState.value.copy(dateValidationError = null)
+        val updated = AdminFilterState(
+            dateOption = DateFilterOption.TODOS,
+            draftStartMillis = start,
+            draftEndMillis = end,
+            appliedStartMillis = 0L,
+            appliedEndMillis = Long.MAX_VALUE
+        )
+        filterFlow.value = updated
+        logFilterApplied(updated, actorId, actorName)
     }
 
     fun setHosterFilter(hosterId: String?) {
-        _uiState.value = _uiState.value.copy(
-            filter = _uiState.value.filter.copy(selectedHosterId = hosterId)
-        )
+        filterFlow.value = filterFlow.value.copy(selectedHosterId = hosterId)
     }
 
     fun setPeriodFilter(period: String?) {
-        _uiState.value = _uiState.value.copy(
-            filter = _uiState.value.filter.copy(selectedPeriod = period)
-        )
+        filterFlow.value = filterFlow.value.copy(selectedPeriod = period)
+    }
+
+    fun setOriginFilter(origin: String?) {
+        filterFlow.value = filterFlow.value.copy(selectedOrigin = origin)
     }
 
     fun setClassificationFilter(cls: String?) {
-        _uiState.value = _uiState.value.copy(
-            filter = _uiState.value.filter.copy(selectedClassification = cls)
+        filterFlow.value = filterFlow.value.copy(selectedClassification = cls)
+    }
+
+    fun togglePreferentialFilter() {
+        filterFlow.value = filterFlow.value.copy(preferentialOnly = !filterFlow.value.preferentialOnly)
+    }
+
+    private fun logFilterApplied(filter: AdminFilterState, actorId: String?, actorName: String?) {
+        systemLogRepository?.logAsync(
+            action = SystemLogActions.ADMIN_FILTER_APPLIED,
+            entityType = "ADMIN",
+            result = LogResult.SUCCESS,
+            description = "Filtros aplicados: ${getPeriodDisplayLabel(filter)}.",
+            userId = actorId,
+            userName = actorName
         )
+    }
+
+    // System logs filters
+    fun setLogsStartDate(millis: Long?) {
+        logsFilterFlow.value = logsFilterFlow.value.copy(startMillis = millis)
+    }
+
+    fun setLogsEndDate(millis: Long?) {
+        logsFilterFlow.value = logsFilterFlow.value.copy(endMillis = millis)
+    }
+
+    fun setLogsUserFilter(user: String?) {
+        logsFilterFlow.value = logsFilterFlow.value.copy(selectedUser = user)
+    }
+
+    fun setLogsActionFilter(action: String?) {
+        logsFilterFlow.value = logsFilterFlow.value.copy(selectedAction = action)
+    }
+
+    fun setLogsDeviceFilter(device: String?) {
+        logsFilterFlow.value = logsFilterFlow.value.copy(selectedDevice = device)
+    }
+
+    fun setLogsResultFilter(result: LogResult?) {
+        logsFilterFlow.value = logsFilterFlow.value.copy(selectedResult = result)
+    }
+
+    fun clearLogsFilters() {
+        logsFilterFlow.value = SystemLogsFilterState()
     }
 
     fun dismissExportDialog() {
@@ -362,9 +529,13 @@ class AdminViewModel(
         _uiState.value = _uiState.value.copy(exportErrorMessage = null)
     }
 
-    fun exportExcel() {
-        val filter = _uiState.value.filter
-        val (startMillis, endMillis) = calculateDateRange(filter)
+    fun exportExcel(actorId: String? = null, actorName: String? = null) {
+        val filter = filterFlow.value
+        val (startMillis, endMillis) = AdminDateCalculator.rangeForOption(
+            option = filter.dateOption,
+            customStart = filter.appliedStartMillis,
+            customEnd = filter.appliedEndMillis
+        )
         val periodLabel = getPeriodDisplayLabel(filter)
 
         viewModelScope.launch {
@@ -377,7 +548,12 @@ class AdminViewModel(
                 startMillis = startMillis,
                 endMillis = endMillis,
                 selectedHosterId = filter.selectedHosterId,
-                selectedShiftPeriod = filter.selectedPeriod
+                selectedShiftPeriod = filter.selectedPeriod,
+                selectedOrigin = filter.selectedOrigin,
+                selectedClassification = filter.selectedClassification,
+                preferentialOnly = filter.preferentialOnly,
+                actorUserId = actorId,
+                actorUserName = actorName
             )
             _uiState.value = _uiState.value.copy(isExporting = false)
 
@@ -441,8 +617,7 @@ class AdminViewModel(
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
-        } catch (e: Exception) {
-            // If no viewer is installed, fallback directly to sharing
+        } catch (_: Exception) {
             shareExportedFile(context, file)
         }
     }

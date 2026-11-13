@@ -16,29 +16,40 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import com.example.PaoComCarneApp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -75,6 +86,12 @@ fun ShiftScreen(
     val syncState by viewModel.syncState.collectAsState()
     val pendingCount by viewModel.pendingCount.collectAsState()
     val scrollState = rememberScrollState()
+    val context = LocalContext.current
+    val deviceIdentityManager = remember {
+        (context.applicationContext as PaoComCarneApp).deviceIdentityManager
+    }
+    var deviceDisplayName by remember { mutableStateOf(deviceIdentityManager.getDeviceDisplayName()) }
+    var showEditDeviceDialog by remember { mutableStateOf(false) }
 
     val totalAtt = attendances.size
     val totalPeople = attendances.sumOf { it.attendance.totalMembers }
@@ -163,7 +180,7 @@ fun ShiftScreen(
                         }
                     }
                     Spacer(modifier = Modifier.width(14.dp))
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = hoster?.name ?: "Hoster",
                             fontSize = 16.sp,
@@ -174,6 +191,59 @@ fun ShiftScreen(
                             text = "Hoster em atividade neste dispositivo",
                             fontSize = 12.sp,
                             color = PaoAnthraciteMuted
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Device Identity Card
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, PaoBorderLight, RoundedCornerShape(14.dp)),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Devices,
+                            contentDescription = null,
+                            tint = PaoRed,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Dispositivo identificado nos logs",
+                                fontSize = 11.sp,
+                                color = PaoAnthraciteMuted
+                            )
+                            Text(
+                                text = deviceDisplayName,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = PaoAnthracite
+                            )
+                        }
+                    }
+                    IconButton(onClick = { showEditDeviceDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Editar nome do dispositivo",
+                            tint = PaoRed,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
@@ -283,6 +353,47 @@ fun ShiftScreen(
                 Text(text = "Trocar de Hoster / Sair", fontSize = 13.sp)
             }
         }
+    }
+
+    if (showEditDeviceDialog) {
+        var draftName by remember(deviceDisplayName) { mutableStateOf(deviceIdentityManager.getFriendlyName().orEmpty()) }
+        AlertDialog(
+            onDismissRequest = { showEditDeviceDialog = false },
+            containerColor = Color.White,
+            title = { Text("Nome do Dispositivo", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Defina um apelido para identificar este aparelho nos logs do sistema (ex.: Recepção 1, Tablet Entrada).",
+                        fontSize = 12.sp,
+                        color = PaoAnthraciteMuted
+                    )
+                    OutlinedTextField(
+                        value = draftName,
+                        onValueChange = { draftName = it },
+                        label = { Text("Apelido do dispositivo") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        deviceIdentityManager.setFriendlyName(draftName)
+                        deviceDisplayName = deviceIdentityManager.getDeviceDisplayName()
+                        showEditDeviceDialog = false
+                    }
+                ) {
+                    Text("Salvar", fontWeight = FontWeight.Bold, color = PaoRed)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditDeviceDialog = false }) {
+                    Text("Cancelar", color = PaoAnthraciteMuted)
+                }
+            }
+        )
     }
 }
 

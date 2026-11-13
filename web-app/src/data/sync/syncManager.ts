@@ -1,4 +1,5 @@
 import { localDb } from '../local/database';
+import { realtimeClient } from '../remote/realtimeClient';
 import {
   supabaseClient,
   type SupabaseAttendanceDto,
@@ -7,20 +8,26 @@ import {
   type SupabaseMemberDto,
   type SupabaseQueueDto,
   type SupabaseShiftDto,
+  type SupabaseSystemLogDto,
 } from '../remote/supabaseClient';
-import type {
-  Attendance,
-  AttendanceMember,
-  AttendanceType,
-  ClientClassification,
-  Hoster,
-  QueueEvent,
-  Shift,
-  ShiftPeriod,
-  ShiftStatus,
-  SyncLogEntry,
-  SyncQueueItem,
-  SyncState,
+import { systemLogRepository } from '../repositories/systemLogRepository';
+import { updateService } from '../update/updateService';
+import {
+  SystemLogActions,
+  type Attendance,
+  type AttendanceMember,
+  type AttendanceType,
+  type ClientClassification,
+  type Hoster,
+  type LogResult,
+  type QueueEvent,
+  type Shift,
+  type ShiftPeriod,
+  type ShiftStatus,
+  type SyncLogEntry,
+  type SyncQueueItem,
+  type SyncState,
+  type SystemLog,
 } from '../../domain/models';
 import { fromIsoUtc } from '../../domain/utils/dateTime';
 
@@ -82,6 +89,10 @@ class SyncManager {
     if (this.initialized) return;
     this.initialized = true;
 
+    systemLogRepository.setSyncTrigger(() => {
+      void this.syncPendingQueue();
+    });
+
     localDb.subscribe(() => {
       void this.refreshQueueSnapshot();
     });
@@ -90,6 +101,14 @@ class SyncManager {
       window.addEventListener('online', () => {
         this.emit({ isOnline: true });
         this.log('Rede online restabelecida. Disparando sincronização...');
+        systemLogRepository.logAsync({
+          action: SystemLogActions.RECONNECT,
+          entityType: 'NETWORK',
+          result: 'SUCCESS',
+          description: 'Conexão de rede restabelecida; validando versão e iniciando sincronização.',
+          triggerSync: false,
+        });
+        void updateService.checkVersion(true);
         void this.triggerSync();
       });
 
@@ -105,6 +124,33 @@ class SyncManager {
 
     const online = typeof navigator !== 'undefined' ? navigator.onLine : false;
     this.emit({ isOnline: online });
+
+    await updateService.checkVersion(online);
+
+    realtimeClient.start((table) => {
+      this.log(`Atualização em tempo real recebida: ${table}`);
+      systemLogRepository.logAsync({
+        action: SystemLogActions.REMOTE_UPDATE_RECEIVED,
+        entityType: 'REALTIME',
+        entityId: table,
+        result: 'SUCCESS',
+        description: `Evento Realtime recebido para tabela ${table}.`,
+        triggerSync: false,
+      });
+
+      if (table === 'app_releases') {
+        void updateService.checkVersion(true);
+      } else if (table === 'attendances') {
+        void this.fetchAttendancesFromRemote();
+        void this.fetchAttendanceMembersFromRemote();
+      } else if (table === 'shifts') {
+        void this.fetchShiftsFromRemote();
+      } else if (table === 'queue_events') {
+        void this.fetchQueueEventsFromRemote();
+      } else if (table === 'system_logs') {
+        void this.fetchSystemLogsFromRemote();
+      }
+    });
 
     if (online) {
       this.log('Conexão detectada. Inicializando sincronização e cache...');
@@ -184,6 +230,7 @@ class SyncManager {
       await this.fetchAttendancesFromRemote();
       await this.fetchAttendanceMembersFromRemote();
       await this.fetchQueueEventsFromRemote();
+      await this.fetchSystemLogsFromRemote();
       this.emit({ lastSyncTime: Date.now() });
     } catch (err) {
       this.log(
@@ -255,6 +302,20 @@ class SyncManager {
     const entities: Attendance[] = [];
     for (const dto of res.data) {
       const local = await localDb.getAttendanceById(dto.id);
+      const remoteUpdatedAt = fromIsoUtc(dto.updated_at);
+
+      if (local && local.syncStatus === 'PENDENTE' && remoteUpdatedAt > local.updatedAt) {
+        systemLogRepository.logAsync({
+          action: SystemLogActions.CONFLICT_DETECTED,
+          entityType: 'ATTENDANCE',
+          entityId: dto.id,
+          result: 'FAILURE',
+          description: `Conflito detectado ao sincronizar atendimento ${dto.id.slice(0, 8)}: alteração local pendente preservada sobre versão remota mais recente.`,
+          triggerSync: false,
+        });
+        continue;
+      }
+
       entities.push({
         id: dto.id,
         shiftId: dto.shift_id,
@@ -265,10 +326,14 @@ class SyncManager {
         newMembers: dto.new_members,
         returningMembers: dto.returning_members,
         createdAt: fromIsoUtc(dto.created_at),
-        updatedAt: fromIsoUtc(dto.updated_at),
+        updatedAt: remoteUpdatedAt,
         isEdited: local?.isEdited ?? false,
         isPreferential: Boolean(dto.is_preferential),
         syncStatus: local?.syncStatus ?? 'SINCRONIZADO',
+        isDeleted: Boolean(dto.is_deleted),
+        deletedAt: dto.deleted_at ? fromIsoUtc(dto.deleted_at) : null,
+        deletedBy: dto.deleted_by ?? null,
+        deletionReason: dto.deletion_reason ?? null,
       });
     }
 
@@ -310,10 +375,33 @@ class SyncManager {
     await localDb.insertQueueEvents(entities);
   }
 
+  async fetchSystemLogsFromRemote(): Promise<void> {
+    const res = await supabaseClient.getSystemLogs();
+    if (!res.ok || !res.data || res.data.length === 0) return;
+
+    const now = Date.now();
+    const entities: SystemLog[] = res.data.map((dto) => ({
+      id: dto.id,
+      userId: dto.user_id ?? null,
+      userName: dto.user_name ?? null,
+      action: dto.action,
+      entityType: dto.entity_type,
+      entityId: dto.entity_id ?? null,
+      deviceName: dto.device_name,
+      result: (dto.result === 'FAILURE' ? 'FAILURE' : 'SUCCESS') as LogResult,
+      description: dto.description,
+      createdAt: fromIsoUtc(dto.created_at),
+      syncedAt: now,
+    }));
+
+    await localDb.insertSystemLogs(entities);
+  }
+
   async triggerSync(): Promise<void> {
     const online = typeof navigator !== 'undefined' ? navigator.onLine : this.snapshot.isOnline;
     this.emit({ isOnline: online });
     this.log('Sincronização manual solicitada...');
+    await updateService.checkVersion(online);
     await this.fetchAllRemoteData();
     await this.syncPendingQueue();
   }
@@ -355,10 +443,22 @@ class SyncManager {
         return;
       }
 
+      const hasBusinessOps = pendingList.some((p) => p.entityType !== 'SYSTEM_LOG');
+      if (hasBusinessOps) {
+        systemLogRepository.logAsync({
+          action: SystemLogActions.SYNC_STARTED,
+          entityType: 'SYNC',
+          result: 'SUCCESS',
+          description: `Sincronização iniciada com ${pendingList.length} item(ns) na fila.`,
+          triggerSync: false,
+        });
+      }
+
       this.emit({ syncState: 'SINCRONIZANDO', pendingCount: pendingList.length });
       this.log(`Enviando ${pendingList.length} operações pendentes para o Supabase...`);
 
       let hasError = false;
+      let syncedCount = 0;
 
       for (const op of pendingList) {
         try {
@@ -366,6 +466,7 @@ class SyncManager {
           const result = await this.processQueueItem(op);
           if (result.ok) {
             await localDb.deleteSyncOperation(op.id);
+            syncedCount++;
             this.log(`Operação ${op.entityType} [${op.entityId.slice(0, 8)}] enviada com sucesso!`);
           } else {
             hasError = true;
@@ -404,15 +505,32 @@ class SyncManager {
         lastSyncTime: remaining === 0 ? Date.now() : this.snapshot.lastSyncTime,
       });
 
+      if (hasBusinessOps) {
+        systemLogRepository.logAsync({
+          action: hasError ? SystemLogActions.SYNC_FAILED : SystemLogActions.SYNC_FINISHED,
+          entityType: 'SYNC',
+          result: hasError ? 'FAILURE' : 'SUCCESS',
+          description: hasError
+            ? `Sincronização concluída com falhas (${syncedCount} enviados, ${remaining} pendentes).`
+            : `Sincronização concluída com sucesso (${syncedCount} enviados).`,
+          triggerSync: false,
+        });
+      }
+
       if (!hasError) {
         await this.fetchAllRemoteData();
       }
     } catch (err) {
       this.isSyncInProgress = false;
-      this.log(
-        `Erro no loop de sincronização: ${err instanceof Error ? err.message : 'desconhecido'}`,
-        true
-      );
+      const errMsg = err instanceof Error ? err.message : 'desconhecido';
+      this.log(`Erro no loop de sincronização: ${errMsg}`, true);
+      systemLogRepository.logAsync({
+        action: SystemLogActions.SYNC_FAILED,
+        entityType: 'SYNC',
+        result: 'FAILURE',
+        description: `Erro crítico no loop de sincronização: ${errMsg}`,
+        triggerSync: false,
+      });
       this.emit({ syncState: 'ERRO' });
     } finally {
       this.isSyncInProgress = false;
@@ -433,6 +551,11 @@ class SyncManager {
         return { ok: res.ok, error: res.errorText };
       }
       case 'ATTENDANCE': {
+        if (op.operation === 'DELETE') {
+          const body = JSON.parse(op.payloadJson) as Record<string, unknown>;
+          const res = await supabaseClient.patchAttendance(op.entityId, body);
+          return { ok: res.ok, error: res.errorText };
+        }
         const dto = JSON.parse(op.payloadJson) as SupabaseAttendanceDto;
         const res = await supabaseClient.upsertAttendance(dto);
         return { ok: res.ok, error: res.errorText };
@@ -499,6 +622,14 @@ class SyncManager {
       }
       case 'HOSTER_DELETE': {
         const res = await supabaseClient.deleteHoster(op.entityId);
+        return { ok: res.ok, error: res.errorText };
+      }
+      case 'SYSTEM_LOG': {
+        const dto = JSON.parse(op.payloadJson) as SupabaseSystemLogDto;
+        const res = await supabaseClient.upsertSystemLog(dto);
+        if (res.ok) {
+          await localDb.markSystemLogSynced(op.entityId, Date.now());
+        }
         return { ok: res.ok, error: res.errorText };
       }
       default:

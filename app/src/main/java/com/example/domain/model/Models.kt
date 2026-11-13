@@ -78,7 +78,11 @@ data class Attendance(
     val updatedAt: Long = createdAt,
     val isEdited: Boolean = false,
     val isPreferential: Boolean = false,
-    val syncStatus: String = "PENDENTE"
+    val syncStatus: String = "PENDENTE",
+    val isDeleted: Boolean = false,
+    val deletedAt: Long? = null,
+    val deletedBy: String? = null,
+    val deletionReason: String? = null
 )
 
 data class AttendanceMember(
@@ -114,4 +118,79 @@ data class QueueEvent(
     val waitingGroups: Int,
     val createdAt: Long = System.currentTimeMillis(),
     val syncStatus: String = "PENDENTE"
+)
+
+enum class LogResult(val label: String) {
+    SUCCESS("Sucesso"),
+    FAILURE("Falha")
+}
+
+object SystemLogActions {
+    const val LOGIN_SUCCESS = "LOGIN_SUCESSO"
+    const val LOGIN_FAILURE = "LOGIN_FALHA"
+    const val LOGOUT = "LOGOUT"
+    const val FIRST_ACCESS_ACTIVATION = "ATIVACAO_PRIMEIRO_ACESSO"
+
+    const val SHIFT_OPEN = "TURNO_ABERTO"
+    const val SHIFT_CLOSE = "TURNO_ENCERRADO"
+    const val SHIFT_INVALID_OPEN = "TURNO_ABERTURA_INVALIDA"
+    const val SHIFT_RESUME = "TURNO_RETOMADO"
+
+    const val ATTENDANCE_CREATE = "ATENDIMENTO_REGISTRADO"
+    const val ATTENDANCE_EDIT = "ATENDIMENTO_EDITADO"
+    const val ATTENDANCE_DELETE = "ATENDIMENTO_EXCLUIDO"
+    const val ATTENDANCE_SAVE_FAILURE = "ATENDIMENTO_FALHA_SALVAR"
+    const val ATTENDANCE_DELETE_FAILURE = "ATENDIMENTO_FALHA_EXCLUIR"
+
+    const val QUEUE_UPDATE = "FILA_ATUALIZADA"
+    const val QUEUE_UPDATE_FAILURE = "FILA_FALHA_ATUALIZAR"
+
+    const val ADMIN_ACCESS = "ADMIN_ACESSO"
+    const val ADMIN_FILTER_APPLIED = "ADMIN_FILTRO_APLICADO"
+    const val REPORT_EXPORTED = "RELATORIO_EXPORTADO"
+    const val REPORT_EXPORT_FAILED = "RELATORIO_FALHA_EXPORTAR"
+
+    const val SYNC_STARTED = "SYNC_INICIADA"
+    const val SYNC_FINISHED = "SYNC_CONCLUIDA"
+    const val SYNC_FAILED = "SYNC_FALHOU"
+    const val RECONNECT = "RECONEXAO_REDE"
+    const val REMOTE_UPDATE_RECEIVED = "ATUALIZACAO_REMOTA_RECEBIDA"
+    const val CONFLICT_DETECTED = "CONFLITO_SINCRONIZACAO"
+
+    const val VERSION_CHECK = "VERSAO_VERIFICADA"
+    const val UPDATE_AVAILABLE = "ATUALIZACAO_DISPONIVEL"
+    const val MANDATORY_UPDATE_DETECTED = "ATUALIZACAO_OBRIGATORIA_DETECTADA"
+    const val UPDATE_DOWNLOAD_STARTED = "ATUALIZACAO_DOWNLOAD_INICIADO"
+    const val UPDATE_DOWNLOAD_COMPLETED = "ATUALIZACAO_DOWNLOAD_CONCLUIDO"
+    const val UPDATE_DOWNLOAD_FAILED = "ATUALIZACAO_DOWNLOAD_FALHOU"
+    const val UPDATE_INSTALL_REQUESTED = "ATUALIZACAO_INSTALACAO_SOLICITADA"
+}
+
+data class SystemLog(
+    val id: String,
+    val userId: String?,
+    val userName: String?,
+    val action: String,
+    val entityType: String,
+    val entityId: String?,
+    val deviceName: String,
+    val result: LogResult,
+    val description: String,
+    val createdAt: Long,
+    val syncedAt: Long?
+)
+
+data class AppReleasePolicy(
+    val id: String,
+    val versionName: String,
+    val versionCode: Int,
+    val minSupportedCode: Int,
+    val mandatory: Boolean,
+    val apkPath: String,
+    val sha256: String,
+    val changelog: String,
+    val releaseReason: String,
+    val active: Boolean,
+    val createdAt: Long,
+    val confirmedAt: Long
 )

@@ -1,5 +1,7 @@
 package com.example.presentation.reception
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Group
@@ -61,9 +64,12 @@ import com.example.domain.model.AttendanceWithMembers
 import com.example.domain.model.Shift
 import com.example.domain.util.DateTimeUtils
 import com.example.presentation.attendance.CorrectionDialog
+import com.example.presentation.attendance.DeleteAttendanceDialog
 import com.example.presentation.attendance.NewAttendanceDialog
 import com.example.presentation.components.PaoPrimaryButton
 import com.example.presentation.components.SyncStatusPill
+import com.example.presentation.components.motionDuration
+import com.example.presentation.components.rememberReducedMotion
 import com.example.presentation.queue.UpdateQueueDialog
 import com.example.presentation.shift.CloseShiftDialog
 import com.example.presentation.shift.ShiftSelectDialog
@@ -306,13 +312,14 @@ fun ReceptionScreen(
                         )
                     }
 
-                    // 4. Último Atendimento Registrado e Ação de Correção
+                    // 4. Último Atendimento Registrado e Ações de Correção/Exclusão
                     item {
                         val lastAttendance = attendances.lastOrNull()
                         if (lastAttendance != null) {
                             LastAttendanceCard(
                                 item = lastAttendance,
-                                onCorrect = { viewModel.setShowCorrection(true) }
+                                onCorrect = { viewModel.setShowCorrection(true) },
+                                onDelete = { viewModel.setAttendanceToDelete(lastAttendance) }
                             )
                         }
                     }
@@ -381,6 +388,14 @@ fun ReceptionScreen(
             returningClients = totalRet,
             onDismiss = { viewModel.setShowCloseShift(false) },
             onConfirmClose = { viewModel.closeShift(onShiftClosed) }
+        )
+    }
+
+    if (uiState.attendancePendingDeletion != null) {
+        DeleteAttendanceDialog(
+            item = uiState.attendancePendingDeletion!!,
+            onDismiss = { viewModel.setAttendanceToDelete(null) },
+            onConfirmDelete = { reason -> viewModel.confirmDeleteAttendance(reason) }
         )
     }
 }
@@ -631,12 +646,15 @@ private fun StatChip(
 @Composable
 private fun LastAttendanceCard(
     item: AttendanceWithMembers,
-    onCorrect: () -> Unit
+    onCorrect: () -> Unit,
+    onDelete: () -> Unit
 ) {
     val att = item.attendance
+    val reducedMotion = rememberReducedMotion()
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize(animationSpec = tween(motionDuration(reducedMotion, 200)))
             .border(1.dp, PaoBorder, RoundedCornerShape(14.dp)),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(14.dp)
@@ -716,27 +734,55 @@ private fun LastAttendanceCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            OutlinedButton(
-                onClick = onCorrect,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(38.dp)
-                    .testTag("btn_corrigir_ultimo"),
-                shape = RoundedCornerShape(8.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, StatusAmber),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = StatusAmber)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Edit,
-                    contentDescription = null,
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Corrigir Último Atendimento",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                OutlinedButton(
+                    onClick = onCorrect,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp)
+                        .testTag("btn_corrigir_ultimo"),
+                    shape = RoundedCornerShape(8.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, StatusAmber),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = StatusAmber)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = "Corrigir",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = onDelete,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp)
+                        .testTag("btn_excluir_ultimo"),
+                    shape = RoundedCornerShape(8.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, StatusRed),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = StatusRed)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DeleteOutline,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = "Excluir",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }

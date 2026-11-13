@@ -10,6 +10,7 @@ import {
   User,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { APP_VERSION_NAME } from '../../domain/appVersion';
 import { authRepository } from '../../data/repositories/authRepository';
 import { syncManager } from '../../data/sync/syncManager';
 import type { Hoster } from '../../domain/models';
@@ -461,7 +462,7 @@ export function LoginScreen() {
           color: 'var(--pao-anthracite-muted)',
         }}
       >
-        Operação Interna • Versão 1.0
+        Operação Interna • Versão {APP_VERSION_NAME}
       </div>
     </div>
   );

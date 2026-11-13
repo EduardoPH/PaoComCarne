@@ -99,4 +99,16 @@ interface SupabaseService {
     suspend fun insertQueueEvent(
         @Body queue: SupabaseQueueDto
     ): Response<ResponseBody>
+
+    @GET("rest/v1/app_releases?select=*&active=eq.true&order=version_code.desc")
+    suspend fun getActiveAppReleases(): Response<List<SupabaseAppReleaseDto>>
+
+    @GET("rest/v1/system_logs?select=*&order=created_at.desc&limit=500")
+    suspend fun getSystemLogs(): Response<List<SupabaseSystemLogDto>>
+
+    @POST("rest/v1/system_logs")
+    @Headers("Prefer: return=minimal, resolution=merge-duplicates")
+    suspend fun upsertSystemLog(
+        @Body log: SupabaseSystemLogDto
+    ): Response<ResponseBody>
 }

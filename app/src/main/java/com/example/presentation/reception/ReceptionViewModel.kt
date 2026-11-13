@@ -32,6 +32,7 @@ data class ReceptionUiState(
     val showCorrectionDialog: Boolean = false,
     val showCloseShiftDialog: Boolean = false,
     val showPeriodSelectDialog: Boolean = false,
+    val attendancePendingDeletion: AttendanceWithMembers? = null,
     val feedbackMessage: String? = null,
     val errorMessage: String? = null,
     val isProcessing: Boolean = false
@@ -113,6 +114,33 @@ class ReceptionViewModel(
 
     fun setShowPeriodSelect(show: Boolean) {
         _uiState.value = _uiState.value.copy(showPeriodSelectDialog = show)
+    }
+
+    fun setAttendanceToDelete(item: AttendanceWithMembers?) {
+        _uiState.value = _uiState.value.copy(attendancePendingDeletion = item)
+    }
+
+    fun confirmDeleteAttendance(reason: String?) {
+        val item = _uiState.value.attendancePendingDeletion ?: return
+        val hoster = currentHoster.value ?: return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isProcessing = true,
+                attendancePendingDeletion = null
+            )
+            val res = receptionRepository.softDeleteAttendance(
+                attendanceId = item.attendance.id,
+                actorHosterId = hoster.id,
+                actorHosterName = hoster.name,
+                isActorAdmin = hoster.isAdmin,
+                reason = reason
+            )
+            _uiState.value = _uiState.value.copy(
+                isProcessing = false,
+                feedbackMessage = if (res.isSuccess) "Atendimento excluído com sucesso! Indicadores atualizados." else null,
+                errorMessage = res.exceptionOrNull()?.message
+            )
+        }
     }
 
     fun clearFeedback() {
@@ -209,7 +237,6 @@ class ReceptionViewModel(
             val res = receptionRepository.closeShift(shift.id)
             _uiState.value = _uiState.value.copy(isProcessing = false)
             if (res.isSuccess) {
-                authRepository.logout()
                 onShiftClosed()
             } else {
                 _uiState.value = _uiState.value.copy(errorMessage = res.exceptionOrNull()?.message)

@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
+  History,
   Key,
   LogOut,
   Pencil,
@@ -12,11 +13,43 @@ import {
 import { useApp } from '../../context/AppContext';
 import { authRepository } from '../../data/repositories/authRepository';
 import { syncManager } from '../../data/sync/syncManager';
-import type { Hoster } from '../../domain/models';
+import type { Hoster, LogResult } from '../../domain/models';
+import { filterSystemLogs, type SystemLogsFilterState } from '../../domain/utils/adminFilters';
 import { BrandLogoBox, SyncStatusPill } from '../components/CommonComponents';
+import { SystemLogItemCard, SystemLogsFilterCard } from '../components/SystemLogsSection';
 
 export function HostersManagementScreen({ onLogout }: { onLogout: () => void }) {
-  const { hosters, sync } = useApp();
+  const { hosters, systemLogs, sync } = useApp();
+
+  const [selectedTab, setSelectedTab] = useState<'HOSTERS' | 'LOGS'>('HOSTERS');
+  const [logsFilter, setLogsFilter] = useState<SystemLogsFilterState>({
+    startMillis: null,
+    endMillis: null,
+    selectedUser: null,
+    selectedAction: null,
+    selectedDevice: null,
+    selectedResult: null,
+  });
+
+  const availableLogUsers = useMemo(
+    () =>
+      Array.from(
+        new Set(systemLogs.map((l) => l.userName).filter((n): n is string => Boolean(n && n.trim())))
+      ).sort(),
+    [systemLogs]
+  );
+  const availableLogActions = useMemo(
+    () => Array.from(new Set(systemLogs.map((l) => l.action))).sort(),
+    [systemLogs]
+  );
+  const availableLogDevices = useMemo(
+    () => Array.from(new Set(systemLogs.map((l) => l.deviceName))).sort(),
+    [systemLogs]
+  );
+  const filteredLogs = useMemo(
+    () => filterSystemLogs(systemLogs, logsFilter),
+    [systemLogs, logsFilter]
+  );
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [hosterToEdit, setHosterToEdit] = useState<Hoster | null>(null);
@@ -57,7 +90,7 @@ export function HostersManagementScreen({ onLogout }: { onLogout: () => void }) 
               Administrador
             </div>
             <div style={{ fontSize: '12px', color: 'var(--pao-anthracite-muted)' }}>
-              Gestão de Hosters
+              Gestão de Hosters & Auditoria
             </div>
           </div>
         </div>
@@ -93,13 +126,65 @@ export function HostersManagementScreen({ onLogout }: { onLogout: () => void }) 
         </div>
       </div>
 
+      {/* Sub-tabs */}
       <div
         style={{
-          height: '1px',
-          backgroundColor: 'var(--pao-border-light)',
+          backgroundColor: '#FFFFFF',
+          border: '1px solid var(--pao-border)',
+          borderRadius: '12px',
+          padding: '4px',
+          display: 'flex',
+          gap: '6px',
           marginBottom: '12px',
+          flexShrink: 0,
         }}
-      />
+      >
+        <button
+          type="button"
+          onClick={() => setSelectedTab('HOSTERS')}
+          className="tap-feedback"
+          style={{
+            flex: 1,
+            height: '36px',
+            borderRadius: '9px',
+            border: 'none',
+            backgroundColor: selectedTab === 'HOSTERS' ? 'var(--pao-red)' : 'transparent',
+            color: selectedTab === 'HOSTERS' ? '#FFFFFF' : 'var(--pao-anthracite-muted)',
+            fontSize: '12px',
+            fontWeight: 700,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '6px',
+          }}
+        >
+          <User size={14} />
+          <span>Hosters ({hosters.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setSelectedTab('LOGS')}
+          className="tap-feedback"
+          style={{
+            flex: 1,
+            height: '36px',
+            borderRadius: '9px',
+            border: 'none',
+            backgroundColor: selectedTab === 'LOGS' ? 'var(--pao-red)' : 'transparent',
+            color: selectedTab === 'LOGS' ? '#FFFFFF' : 'var(--pao-anthracite-muted)',
+            fontSize: '12px',
+            fontWeight: 700,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '6px',
+          }}
+        >
+          <History size={14} />
+          <span>Logs ({systemLogs.length})</span>
+        </button>
+      </div>
 
       {actionMessage && (
         <div
@@ -135,58 +220,122 @@ export function HostersManagementScreen({ onLogout }: { onLogout: () => void }) 
         </div>
       )}
 
-      {/* Info Card */}
-      <div
-        style={{
-          backgroundColor: '#FFFFFF',
-          border: '1px solid var(--pao-border-light)',
-          borderRadius: '12px',
-          padding: '12px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-        }}
-      >
-        <RefreshCw size={22} color="#9C1819" style={{ flexShrink: 0 }} />
-        <span style={{ fontSize: '12px', color: 'var(--pao-anthracite-muted)' }}>
-          Todas as inclusões, edições e exclusões são salvas localmente e sincronizadas no Supabase
-          em tempo real.
-        </span>
-      </div>
+      {selectedTab === 'HOSTERS' ? (
+        <>
+          {/* Info Card */}
+          <div
+            style={{
+              backgroundColor: '#FFFFFF',
+              border: '1px solid var(--pao-border-light)',
+              borderRadius: '12px',
+              padding: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              flexShrink: 0,
+            }}
+          >
+            <RefreshCw size={22} color="#9C1819" style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: '12px', color: 'var(--pao-anthracite-muted)' }}>
+              Todas as inclusões, edições e exclusões são salvas localmente e sincronizadas no
+              Supabase em tempo real.
+            </span>
+          </div>
 
-      <div
-        style={{
-          marginTop: '14px',
-          marginBottom: '8px',
-          fontSize: '14px',
-          fontWeight: 700,
-          color: 'var(--pao-anthracite)',
-        }}
-      >
-        Hosters Cadastrados ({hosters.length})
-      </div>
+          <div
+            style={{
+              marginTop: '14px',
+              marginBottom: '8px',
+              fontSize: '14px',
+              fontWeight: 700,
+              color: 'var(--pao-anthracite)',
+              flexShrink: 0,
+            }}
+          >
+            Hosters Cadastrados ({hosters.length})
+          </div>
 
-      {/* Hosters List */}
-      <div
-        className="scroll-area"
-        style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '8px',
-          paddingBottom: '76px',
-        }}
-      >
-        {hosters.map((hoster) => (
-          <HosterItemCard
-            key={hoster.id}
-            hoster={hoster}
-            onEdit={() => setHosterToEdit(hoster)}
-            onResetPin={() => setHosterToResetPin(hoster)}
-            onDelete={() => setHosterToDelete(hoster)}
+          {/* Hosters List */}
+          <div
+            className="scroll-area"
+            style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+              paddingBottom: '76px',
+            }}
+          >
+            {hosters.map((hoster) => (
+              <HosterItemCard
+                key={hoster.id}
+                hoster={hoster}
+                onEdit={() => setHosterToEdit(hoster)}
+                onResetPin={() => setHosterToResetPin(hoster)}
+                onDelete={() => setHosterToDelete(hoster)}
+              />
+            ))}
+          </div>
+        </>
+      ) : (
+        <div
+          className="scroll-area"
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+            paddingBottom: '20px',
+          }}
+        >
+          <SystemLogsFilterCard
+            filter={logsFilter}
+            availableUsers={availableLogUsers}
+            availableActions={availableLogActions}
+            availableDevices={availableLogDevices}
+            onStartDateChange={(v) => setLogsFilter((p) => ({ ...p, startMillis: v }))}
+            onEndDateChange={(v) => setLogsFilter((p) => ({ ...p, endMillis: v }))}
+            onUserChange={(v) => setLogsFilter((p) => ({ ...p, selectedUser: v }))}
+            onActionChange={(v) => setLogsFilter((p) => ({ ...p, selectedAction: v }))}
+            onDeviceChange={(v) => setLogsFilter((p) => ({ ...p, selectedDevice: v }))}
+            onResultChange={(v: LogResult | null) =>
+              setLogsFilter((p) => ({ ...p, selectedResult: v }))
+            }
+            onClearFilters={() =>
+              setLogsFilter({
+                startMillis: null,
+                endMillis: null,
+                selectedUser: null,
+                selectedAction: null,
+                selectedDevice: null,
+                selectedResult: null,
+              })
+            }
           />
-        ))}
-      </div>
+          <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--pao-anthracite)' }}>
+            Registros de Auditoria ({filteredLogs.length})
+          </div>
+          {filteredLogs.length === 0 ? (
+            <div
+              style={{
+                backgroundColor: '#FFFFFF',
+                border: '1px solid var(--pao-border)',
+                borderRadius: '14px',
+                padding: '20px',
+                textAlign: 'center',
+                fontSize: '12px',
+                color: 'var(--pao-anthracite-muted)',
+              }}
+            >
+              Nenhum log encontrado para os filtros aplicados.
+            </div>
+          ) : (
+            filteredLogs.slice(0, 150).map((log) => (
+              <SystemLogItemCard key={log.id} log={log} />
+            ))
+          )}
+        </div>
+      )}
 
       {/* Bottom logout button */}
       <div
@@ -222,30 +371,32 @@ export function HostersManagementScreen({ onLogout }: { onLogout: () => void }) 
       </div>
 
       {/* FAB Add Hoster */}
-      <button
-        type="button"
-        onClick={() => setShowCreateModal(true)}
-        data-testid="fab_add_hoster"
-        aria-label="Adicionar Hoster"
-        className="tap-feedback"
-        style={{
-          position: 'absolute',
-          right: '20px',
-          bottom: 'calc(76px + var(--safe-bottom))',
-          width: '56px',
-          height: '56px',
-          borderRadius: '50%',
-          backgroundColor: 'var(--pao-red)',
-          color: '#FFFFFF',
-          border: 'none',
-          boxShadow: '0 6px 16px rgba(156, 24, 25, 0.35)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <Plus size={26} color="#FFFFFF" />
-      </button>
+      {selectedTab === 'HOSTERS' && (
+        <button
+          type="button"
+          onClick={() => setShowCreateModal(true)}
+          data-testid="fab_add_hoster"
+          aria-label="Adicionar Hoster"
+          className="tap-feedback"
+          style={{
+            position: 'absolute',
+            right: '20px',
+            bottom: 'calc(76px + var(--safe-bottom))',
+            width: '56px',
+            height: '56px',
+            borderRadius: '50%',
+            backgroundColor: 'var(--pao-red)',
+            color: '#FFFFFF',
+            border: 'none',
+            boxShadow: '0 6px 16px rgba(156, 24, 25, 0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Plus size={26} color="#FFFFFF" />
+        </button>
+      )}
 
       {/* Modals */}
       {showCreateModal && (

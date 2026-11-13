@@ -1,5 +1,6 @@
 import { localDb } from '../local/database';
-import type { AttendanceMember, Shift } from '../../domain/models';
+import { systemLogRepository } from './systemLogRepository';
+import { SystemLogActions, type AttendanceMember, type Shift } from '../../domain/models';
 import { formatDate, formatDateTime, formatFileDate } from '../../domain/utils/dateTime';
 import {
   generateWorkbookBlob,
@@ -33,16 +34,41 @@ export async function exportReport(params: {
   endMillis: number;
   selectedHosterId?: string | null;
   selectedShiftPeriod?: string | null;
+  selectedOrigin?: string | null;
+  selectedClassification?: 'NOVO' | 'RECORRENTE' | null;
+  preferentialOnly?: boolean;
+  actorUserId?: string | null;
+  actorUserName?: string | null;
 }): Promise<ExportResult> {
-  const { startMillis, endMillis, selectedHosterId = null, selectedShiftPeriod = null } = params;
+  const {
+    startMillis,
+    endMillis,
+    selectedHosterId = null,
+    selectedShiftPeriod = null,
+    selectedOrigin = null,
+    selectedClassification = null,
+    preferentialOnly = false,
+    actorUserId = null,
+    actorUserName = null,
+  } = params;
 
   try {
     // Rule 1: Check pending sync items
     const pendingCount = await localDb.getPendingCount();
     if (pendingCount > 0) {
+      const reason = `Existem ${pendingCount} registros pendentes de sincronização com o servidor. Sincronize antes de exportar.`;
+      systemLogRepository.logAsync({
+        action: SystemLogActions.REPORT_EXPORT_FAILED,
+        entityType: 'REPORT',
+        userId: actorUserId,
+        userName: actorUserName,
+        result: 'FAILURE',
+        description: reason,
+        triggerSync: false,
+      });
       return {
         status: 'BLOCKED',
-        reason: `Existem ${pendingCount} registros pendentes de sincronização com o servidor. Sincronize antes de exportar.`,
+        reason,
         pendingSyncCount: pendingCount,
       };
     }
@@ -51,9 +77,18 @@ export async function exportReport(params: {
     const openShifts = await localDb.getOpenShiftsInRange(startMillis, endMillis);
     if (openShifts.length > 0) {
       const hosterNames = openShifts.map((s) => `${s.hosterName} (${s.period})`).join(', ');
+      const reason = `Existem turnos abertos no período selecionado que impedem o fechamento e a exportação do relatório: ${hosterNames}. Encerre os turnos primeiro.`;
+      systemLogRepository.logAsync({
+        action: SystemLogActions.REPORT_EXPORT_FAILED,
+        entityType: 'REPORT',
+        userId: actorUserId,
+        userName: actorUserName,
+        result: 'FAILURE',
+        description: reason,
+      });
       return {
         status: 'BLOCKED',
-        reason: `Existem turnos abertos no período selecionado que impedem o fechamento e a exportação do relatório: ${hosterNames}. Encerre os turnos primeiro.`,
+        reason,
         openShiftsCount: openShifts.length,
       };
     }
@@ -61,29 +96,60 @@ export async function exportReport(params: {
     const shiftsList = await localDb.getAllShifts();
     const shifts = new Map<string, Shift>(shiftsList.map((s) => [s.id, s]));
 
+    const allMembersRaw = await localDb.getAllMembers();
+    const memberByAttAll = new Map<string, AttendanceMember[]>();
+    for (const m of allMembersRaw) {
+      const list = memberByAttAll.get(m.attendanceId) ?? [];
+      list.push(m);
+      memberByAttAll.set(m.attendanceId, list);
+    }
+
     const allAttendances = await localDb.getAllAttendances();
     const filteredAttendances = allAttendances
       .filter((att) => {
+        if (att.isDeleted) return false;
         const matchDate = att.createdAt >= startMillis && att.createdAt <= endMillis;
         const matchHoster = selectedHosterId === null || att.hosterId === selectedHosterId;
         const shift = shifts.get(att.shiftId);
         const matchPeriod =
           selectedShiftPeriod === null || shift?.period === selectedShiftPeriod;
-        return matchDate && matchHoster && matchPeriod;
+        const matchClass =
+          selectedClassification === null
+            ? true
+            : selectedClassification === 'NOVO'
+              ? att.newMembers > 0
+              : att.returningMembers > 0;
+        const matchPref = !preferentialOnly || att.isPreferential;
+        const members = memberByAttAll.get(att.id) ?? [];
+        const matchOrigin =
+          selectedOrigin === null ||
+          members.some(
+            (m) =>
+              m.classification === 'NOVO' &&
+              m.origin?.trim().toLowerCase() === selectedOrigin.trim().toLowerCase()
+          );
+        return matchDate && matchHoster && matchPeriod && matchClass && matchPref && matchOrigin;
       })
       .sort((a, b) => a.createdAt - b.createdAt);
 
     if (filteredAttendances.length === 0) {
+      const msg = 'Nenhum atendimento encontrado para os critérios e período selecionados.';
+      systemLogRepository.logAsync({
+        action: SystemLogActions.REPORT_EXPORT_FAILED,
+        entityType: 'REPORT',
+        userId: actorUserId,
+        userName: actorUserName,
+        result: 'FAILURE',
+        description: msg,
+      });
       return {
         status: 'FAILURE',
-        message: 'Nenhum atendimento encontrado para os critérios e período selecionados.',
+        message: msg,
       };
     }
 
     const attendanceIds = new Set(filteredAttendances.map((a) => a.id));
-    const allMembers = (await localDb.getAllMembers()).filter((m) =>
-      attendanceIds.has(m.attendanceId)
-    );
+    const allMembers = allMembersRaw.filter((m) => attendanceIds.has(m.attendanceId));
     const memberMap = new Map<string, AttendanceMember[]>();
     for (const m of allMembers) {
       const list = memberMap.get(m.attendanceId) ?? [];
@@ -214,6 +280,16 @@ export async function exportReport(params: {
 
     const bytes = await generateWorkbookBlob(attendanceRows, clientRows, consolidatedSummary);
 
+    systemLogRepository.logAsync({
+      action: SystemLogActions.REPORT_EXPORTED,
+      entityType: 'REPORT',
+      entityId: fileName,
+      userId: actorUserId,
+      userName: actorUserName,
+      result: 'SUCCESS',
+      description: `Relatório XLSX exportado (${attendanceRows.length} atendimentos, ${grandTotalClients} pessoas).`,
+    });
+
     return {
       status: 'SUCCESS',
       bytes,
@@ -222,9 +298,19 @@ export async function exportReport(params: {
       totalClients: grandTotalClients,
     };
   } catch (err) {
+    const message =
+      err instanceof Error ? err.message : 'Erro desconhecido ao gerar arquivo Excel.';
+    systemLogRepository.logAsync({
+      action: SystemLogActions.REPORT_EXPORT_FAILED,
+      entityType: 'REPORT',
+      userId: actorUserId,
+      userName: actorUserName,
+      result: 'FAILURE',
+      description: `Erro na exportação XLSX: ${message}`,
+    });
     return {
       status: 'FAILURE',
-      message: err instanceof Error ? err.message : 'Erro desconhecido ao gerar arquivo Excel.',
+      message,
     };
   }
 }
@@ -261,7 +347,6 @@ export async function shareOrDownloadXlsx(bytes: Uint8Array, fileName: string): 
       });
       return;
     } catch (err) {
-      // User cancelled share sheet -> do not force-download if aborted
       if (err instanceof DOMException && err.name === 'AbortError') {
         return;
       }

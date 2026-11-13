@@ -7,6 +7,8 @@ import com.example.data.local.entity.SyncQueueEntity
 import com.example.data.remote.SupabaseClient
 import com.example.data.sync.SyncManager
 import com.example.domain.model.Hoster
+import com.example.domain.model.LogResult
+import com.example.domain.model.SystemLogActions
 import com.example.domain.util.SecurityUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,7 +23,8 @@ import kotlinx.coroutines.withContext
 class AuthRepository(
     private val context: Context,
     private val database: AppDatabase,
-    private val syncManager: SyncManager
+    private val syncManager: SyncManager,
+    private val systemLogRepository: SystemLogRepository? = null
 ) {
     private val hosterDao = database.hosterDao()
     private val syncQueueDao = database.syncQueueDao()
@@ -283,6 +286,15 @@ class AuthRepository(
             isActivated = true
         )
         saveSession(hoster)
+        systemLogRepository?.recordLog(
+            action = SystemLogActions.FIRST_ACCESS_ACTIVATION,
+            entityType = "HOSTER",
+            entityId = updated.id,
+            result = LogResult.SUCCESS,
+            description = "Primeiro acesso ativado para ${updated.name}.",
+            userId = updated.id,
+            userName = updated.name
+        )
         syncManager.triggerSync()
         Result.success(hoster)
     }
@@ -319,22 +331,67 @@ class AuthRepository(
                     isAdmin = true
                 )
                 saveSession(hoster)
+                systemLogRepository?.recordLog(
+                    action = SystemLogActions.LOGIN_SUCCESS,
+                    entityType = "AUTH",
+                    entityId = "admin",
+                    result = LogResult.SUCCESS,
+                    description = "Login administrativo realizado com sucesso.",
+                    userId = "admin",
+                    userName = "Administrador"
+                )
                 return@withContext Result.success(hoster)
             } else {
+                systemLogRepository?.recordLog(
+                    action = SystemLogActions.LOGIN_FAILURE,
+                    entityType = "AUTH",
+                    entityId = hosterId,
+                    result = LogResult.FAILURE,
+                    description = "Falha de autenticação para Administrador: credencial inválida.",
+                    userId = "admin",
+                    userName = "Administrador"
+                )
                 return@withContext Result.failure(Exception("Senha incorreta."))
             }
         }
 
         if (entity == null) {
+            systemLogRepository?.recordLog(
+                action = SystemLogActions.LOGIN_FAILURE,
+                entityType = "AUTH",
+                entityId = hosterId,
+                result = LogResult.FAILURE,
+                description = "Tentativa de login com usuário não encontrado ($hosterId).",
+                userId = hosterId,
+                userName = hosterId
+            )
             return@withContext Result.failure(Exception("Hoster não encontrado."))
         }
 
         if (!entity.isActivated) {
+            systemLogRepository?.recordLog(
+                action = SystemLogActions.LOGIN_FAILURE,
+                entityType = "AUTH",
+                entityId = entity.id,
+                result = LogResult.FAILURE,
+                description = "Tentativa de login antes da ativação de primeiro acesso (${entity.name}).",
+                userId = entity.id,
+                userName = entity.name
+            )
             return@withContext Result.failure(Exception("Primeiro acesso pendente."))
         }
 
         val isValid = SecurityUtils.verifyPassword(pin, entity.pinSalt, entity.pinHash)
         if (!isValid) {
+            systemLogRepository?.recordLog(
+                action = SystemLogActions.LOGIN_FAILURE,
+                entityType = "AUTH",
+                entityId = entity.id,
+                result = LogResult.FAILURE,
+                description = "Senha incorreta informada no login de ${entity.name}.",
+                userId = entity.id,
+                userName = entity.name
+            )
             return@withContext Result.failure(Exception("Senha incorreta."))
         }
 
@@ -345,6 +402,15 @@ class AuthRepository(
             isAdmin = entity.isAdmin
         )
         saveSession(hoster)
+        systemLogRepository?.recordLog(
+            action = SystemLogActions.LOGIN_SUCCESS,
+            entityType = "AUTH",
+            entityId = entity.id,
+            result = LogResult.SUCCESS,
+            description = "Login realizado com sucesso por ${entity.name}.",
+            userId = entity.id,
+            userName = entity.name
+        )
         Result.success(hoster)
     }
 
@@ -358,7 +424,19 @@ class AuthRepository(
     }
 
     fun logout() {
+        val current = _currentHoster.value
         prefs.edit().clear().apply()
         _currentHoster.value = null
+        if (current != null) {
+            systemLogRepository?.logAsync(
+                action = SystemLogActions.LOGOUT,
+                entityType = "AUTH",
+                entityId = current.id,
+                result = LogResult.SUCCESS,
+                description = "Logout realizado por ${current.name}.",
+                userId = current.id,
+                userName = current.name
+            )
+        }
     }
 }

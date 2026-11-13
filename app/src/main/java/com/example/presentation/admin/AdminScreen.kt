@@ -1,6 +1,13 @@
 package com.example.presentation.admin
 
 import android.app.DatePickerDialog
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,14 +25,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ClearAll
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
@@ -42,6 +50,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -51,16 +60,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.domain.model.ClientOrigins
-import com.example.domain.model.Shift
 import com.example.domain.model.SyncState
 import com.example.domain.util.DateTimeUtils
 import com.example.presentation.components.LocalSyncLogsOpener
 import com.example.presentation.components.PaoPrimaryButton
 import com.example.presentation.components.SyncStatusPill
+import com.example.presentation.components.motionDuration
+import com.example.presentation.components.rememberReducedMotion
 import com.example.ui.theme.PaoAnthracite
 import com.example.ui.theme.PaoAnthraciteMuted
 import com.example.ui.theme.PaoBackground
@@ -77,12 +86,19 @@ import java.util.Calendar
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AdminScreen(
-    viewModel: AdminViewModel
+    viewModel: AdminViewModel,
+    actorId: String? = null,
+    actorName: String? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val syncState by viewModel.syncState.collectAsState()
     val pendingCount by viewModel.pendingCount.collectAsState()
     val context = LocalContext.current
+    val reducedMotion = rememberReducedMotion()
+
+    LaunchedEffect(Unit) {
+        viewModel.onAdminScreenOpened(actorId, actorName)
+    }
 
     val metrics = uiState.metrics
 
@@ -171,7 +187,7 @@ fun AdminScreen(
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         color = Color.White,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, PaoBorderLight),
+                        border = BorderStroke(1.dp, PaoBorderLight),
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Column(modifier = Modifier.padding(10.dp)) {
@@ -279,7 +295,7 @@ fun AdminScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             // Header
             item {
@@ -298,7 +314,7 @@ fun AdminScreen(
                             color = PaoAnthracite
                         )
                         Text(
-                            text = "Métricas operacionais e exportação de relatórios",
+                            text = "Filtros de período, métricas, relatórios e logs",
                             fontSize = 12.sp,
                             color = PaoAnthraciteMuted
                         )
@@ -308,6 +324,57 @@ fun AdminScreen(
                         syncState = syncState,
                         pendingCount = pendingCount
                     )
+                }
+            }
+
+            // Sub-navigation Segmented Control: Indicadores & Relatórios | Logs do Sistema
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color.White,
+                    border = BorderStroke(1.dp, PaoBorder),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        AdminSubTab.values().forEach { subTab ->
+                            val selected = uiState.activeSubTab == subTab
+                            Surface(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable { viewModel.setSubTab(subTab) }
+                                    .testTag("admin_subtab_${subTab.name.lowercase()}"),
+                                color = if (selected) PaoRed else Color.Transparent,
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (subTab == AdminSubTab.LOGS) {
+                                        Icon(
+                                            imageVector = Icons.Default.History,
+                                            contentDescription = null,
+                                            tint = if (selected) Color.White else PaoAnthraciteMuted,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                    }
+                                    Text(
+                                        text = subTab.label,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                                        color = if (selected) Color.White else PaoAnthraciteMuted,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -321,7 +388,7 @@ fun AdminScreen(
                             .clip(RoundedCornerShape(12.dp))
                             .clickable { opener() },
                         color = StatusAmber.copy(alpha = 0.12f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, StatusAmber.copy(alpha = 0.4f)),
+                        border = BorderStroke(1.dp, StatusAmber.copy(alpha = 0.4f)),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Row(
@@ -349,541 +416,712 @@ fun AdminScreen(
                                 )
                             }
                             TextButton(onClick = { opener() }) {
-                                Text("Ver Logs", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PaoRed)
+                                Text("Ver Fila", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PaoRed)
                             }
                         }
                     }
                 }
             }
 
-            // Filter Bar Card
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .border(1.dp, PaoBorder, RoundedCornerShape(16.dp)),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.FilterList,
-                                contentDescription = null,
-                                tint = PaoRed,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Período do Relatório e Filtros",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = PaoAnthracite
-                            )
-                        }
+            if (uiState.activeSubTab == AdminSubTab.LOGS) {
+                // Logs do Sistema View
+                item {
+                    SystemLogsFilterCard(
+                        filter = uiState.logsFilter,
+                        availableUsers = uiState.availableLogUsers,
+                        availableActions = uiState.availableLogActions,
+                        availableDevices = uiState.availableLogDevices,
+                        onStartDateChange = { viewModel.setLogsStartDate(it) },
+                        onEndDateChange = { viewModel.setLogsEndDate(it) },
+                        onUserChange = { viewModel.setLogsUserFilter(it) },
+                        onActionChange = { viewModel.setLogsActionFilter(it) },
+                        onDeviceChange = { viewModel.setLogsDeviceFilter(it) },
+                        onResultChange = { viewModel.setLogsResultFilter(it) },
+                        onClearFilters = { viewModel.clearLogsFilters() }
+                    )
+                }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                item {
+                    Text(
+                        text = "Registros de Atividade (${uiState.filteredLogs.size})",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PaoAnthracite
+                    )
+                }
 
-                        // Opções rápidas de data
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                if (uiState.filteredLogs.isEmpty()) {
+                    item {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, PaoBorderLight, RoundedCornerShape(14.dp)),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            shape = RoundedCornerShape(14.dp)
                         ) {
-                            DateFilterOption.values().forEach { opt ->
-                                val isSelected = uiState.filter.dateOption == opt
-                                Surface(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .clickable { viewModel.setDateFilter(opt) }
-                                        .testTag("filter_date_${opt.name.lowercase()}"),
-                                    color = if (isSelected) PaoRed else PaoCreamLight,
-                                    shape = RoundedCornerShape(14.dp)
-                                ) {
-                                    Text(
-                                        text = opt.label,
-                                        fontSize = 11.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (isSelected) Color.White else PaoAnthracite,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                    )
-                                }
-                            }
+                            Text(
+                                text = "Nenhum log encontrado para os filtros aplicados.",
+                                fontSize = 13.sp,
+                                color = PaoAnthraciteMuted,
+                                modifier = Modifier.padding(18.dp)
+                            )
                         }
+                    }
+                } else {
+                    items(uiState.filteredLogs, key = { it.id }) { logItem ->
+                        SystemLogItemCard(log = logItem)
+                    }
+                }
 
-                        // Se for "Dia específico", exibir seletor de dia
-                        if (uiState.filter.dateOption == DateFilterOption.DIA_ESPECIFICO) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Surface(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable {
-                                        val cal = Calendar.getInstance().apply {
-                                            timeInMillis = uiState.filter.specificDateMillis
-                                        }
-                                        DatePickerDialog(
-                                            context,
-                                            { _, y, m, d ->
-                                                val sel = Calendar.getInstance().apply {
-                                                    set(y, m, d)
-                                                }
-                                                viewModel.setSpecificDate(sel.timeInMillis)
-                                            },
-                                            cal.get(Calendar.YEAR),
-                                            cal.get(Calendar.MONTH),
-                                            cal.get(Calendar.DAY_OF_MONTH)
-                                        ).show()
-                                    },
-                                color = PaoCreamLight,
-                                border = androidx.compose.foundation.BorderStroke(1.dp, PaoBorder),
-                                shape = RoundedCornerShape(10.dp)
+                item { Spacer(modifier = Modifier.height(20.dp)) }
+            } else {
+                // 1. PROMINENT TOP PERIOD & FILTERS CARD ("Período da consulta")
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .animateContentSize(animationSpec = tween(motionDuration(reducedMotion, 200)))
+                            .border(1.5.dp, PaoRed.copy(alpha = 0.35f), RoundedCornerShape(18.dp)),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(18.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Surface(
+                                        modifier = Modifier.size(32.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = PaoCream
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                Icons.Default.CalendarToday,
+                                                contentDescription = null,
+                                                tint = PaoRed,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = "Período da consulta",
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = PaoAnthracite
+                                        )
+                                        Text(
+                                            text = "Consultando: ${uiState.activePeriodSummary}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = PaoRed
+                                        )
+                                    }
+                                }
+
+                                TextButton(
+                                    onClick = { viewModel.clearAllFilters(actorId, actorName) },
+                                    modifier = Modifier.testTag("btn_limpar_periodo")
                                 ) {
                                     Icon(
-                                        Icons.Default.CalendarToday,
+                                        Icons.Default.ClearAll,
                                         contentDescription = null,
-                                        tint = PaoRed,
-                                        modifier = Modifier.size(16.dp)
+                                        tint = PaoAnthraciteMuted,
+                                        modifier = Modifier.size(15.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = "Dia selecionado: ${DateTimeUtils.formatDate(uiState.filter.specificDateMillis)} (toque para alterar)",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = PaoAnthracite
-                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Limpar", fontSize = 11.sp, color = PaoAnthraciteMuted)
                                 }
                             }
-                        }
 
-                        // Se for "Início e Fim", exibir dois seletores de data
-                        if (uiState.filter.dateOption == DateFilterOption.INTERVALO_PERSONALIZADO) {
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Prominent Data inicial + Data final boxes ALWAYS visible at the top
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
+                                DatePickerFieldBox(
+                                    label = "Data inicial",
+                                    dateText = if (uiState.filter.dateOption == DateFilterOption.TODOS) {
+                                        "Início"
+                                    } else {
+                                        DateTimeUtils.formatDate(uiState.filter.draftStartMillis)
+                                    },
+                                    initialMillis = uiState.filter.draftStartMillis,
+                                    onDateSelected = { viewModel.setDraftStartDate(it) },
+                                    testTag = "admin_data_inicial",
+                                    modifier = Modifier.weight(1f)
+                                )
+
+                                DatePickerFieldBox(
+                                    label = "Data final",
+                                    dateText = if (uiState.filter.dateOption == DateFilterOption.TODOS) {
+                                        "Fim"
+                                    } else {
+                                        DateTimeUtils.formatDate(uiState.filter.draftEndMillis)
+                                    },
+                                    initialMillis = uiState.filter.draftEndMillis,
+                                    onDateSelected = { viewModel.setDraftEndDate(it) },
+                                    testTag = "admin_data_final",
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+
+                            if (!uiState.dateValidationError.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(8.dp))
                                 Surface(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .clickable {
-                                            val cal = Calendar.getInstance().apply {
-                                                timeInMillis = uiState.filter.customStartMillis
-                                            }
-                                            DatePickerDialog(
-                                                context,
-                                                { _, y, m, d ->
-                                                    val sel = Calendar.getInstance().apply {
-                                                        set(y, m, d)
-                                                    }
-                                                    viewModel.setCustomDateRange(
-                                                        sel.timeInMillis,
-                                                        uiState.filter.customEndMillis
-                                                    )
-                                                },
-                                                cal.get(Calendar.YEAR),
-                                                cal.get(Calendar.MONTH),
-                                                cal.get(Calendar.DAY_OF_MONTH)
-                                            ).show()
-                                        },
-                                    color = PaoCreamLight,
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, PaoBorder),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Column(modifier = Modifier.padding(8.dp)) {
-                                        Text("Data Início", fontSize = 10.sp, color = PaoAnthraciteMuted)
-                                        Text(
-                                            DateTimeUtils.formatDate(uiState.filter.customStartMillis),
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = PaoAnthracite
-                                        )
-                                    }
-                                }
-
-                                Surface(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .clickable {
-                                            val cal = Calendar.getInstance().apply {
-                                                timeInMillis = uiState.filter.customEndMillis
-                                            }
-                                            DatePickerDialog(
-                                                context,
-                                                { _, y, m, d ->
-                                                    val sel = Calendar.getInstance().apply {
-                                                        set(y, m, d)
-                                                    }
-                                                    viewModel.setCustomDateRange(
-                                                        uiState.filter.customStartMillis,
-                                                        sel.timeInMillis
-                                                    )
-                                                },
-                                                cal.get(Calendar.YEAR),
-                                                cal.get(Calendar.MONTH),
-                                                cal.get(Calendar.DAY_OF_MONTH)
-                                            ).show()
-                                        },
-                                    color = PaoCreamLight,
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, PaoBorder),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Column(modifier = Modifier.padding(8.dp)) {
-                                        Text("Data Fim", fontSize = 10.sp, color = PaoAnthraciteMuted)
-                                        Text(
-                                            DateTimeUtils.formatDate(uiState.filter.customEndMillis),
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = PaoAnthracite
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // Filtros de Turno (Todos, Manhã, Noite) e Preferencial
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            PeriodChip(
-                                title = "Todos Turnos",
-                                isSelected = uiState.filter.selectedPeriod == null
-                            ) {
-                                viewModel.setPeriodFilter(null)
-                            }
-                            PeriodChip(
-                                title = "Manhã",
-                                isSelected = uiState.filter.selectedPeriod == "MANHA"
-                            ) {
-                                viewModel.setPeriodFilter("MANHA")
-                            }
-                            PeriodChip(
-                                title = "Noite",
-                                isSelected = uiState.filter.selectedPeriod == "NOITE"
-                            ) {
-                                viewModel.setPeriodFilter("NOITE")
-                            }
-                            PeriodChip(
-                                title = "★ Preferencial",
-                                isSelected = uiState.filter.preferentialOnly,
-                                onClick = { viewModel.togglePreferentialFilter() }
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Key Metrics Grid
-            item {
-                Text(
-                    text = "Indicadores Principais",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = PaoAnthracite
-                )
-            }
-
-            item {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    AdminMetricCard(
-                        title = "Pessoas Atendidas",
-                        value = metrics.totalPeople.toString(),
-                        subtitle = "${metrics.totalAttendances} atendimentos",
-                        modifier = Modifier.weight(1f)
-                    )
-                    AdminMetricCard(
-                        title = "Clientes Novos",
-                        value = metrics.totalNewClients.toString(),
-                        valueColor = StatusGreen,
-                        subtitle = "${if (metrics.totalPeople > 0) (metrics.totalNewClients * 100 / metrics.totalPeople) else 0}% do total",
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-
-            item {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    AdminMetricCard(
-                        title = "Recorrentes",
-                        value = metrics.totalReturningClients.toString(),
-                        subtitle = "Clientes fiéis",
-                        modifier = Modifier.weight(1f)
-                    )
-                    AdminMetricCard(
-                        title = "Preferencial (★)",
-                        value = metrics.preferentialCount.toString(),
-                        valueColor = StatusAmber,
-                        subtitle = "Atendimentos prioritários",
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-
-            // Clientes por turno (Manhã e Noite)
-            item {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    AdminMetricCard(
-                        title = "Clientes Manhã",
-                        value = metrics.morningAttendances.toString(),
-                        subtitle = "Turno Manhã",
-                        modifier = Modifier.weight(1f)
-                    )
-                    AdminMetricCard(
-                        title = "Clientes Noite",
-                        value = metrics.nightAttendances.toString(),
-                        subtitle = "Turno Noite",
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-
-            // Distribution of new clients by origin
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .border(1.dp, PaoBorder, RoundedCornerShape(16.dp)),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "De Onde Conheceram (Clientes Novos)",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = PaoAnthracite
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        val totalOriginNew = metrics.originDistribution.values.sum().coerceAtLeast(1)
-                        ClientOrigins.ALL.forEach { origin ->
-                            val count = metrics.originDistribution[origin] ?: 0
-                            val pct = (count * 100) / totalOriginNew
-
-                            Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                                Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    color = StatusRed.copy(alpha = 0.1f),
+                                    border = BorderStroke(1.dp, StatusRed.copy(alpha = 0.4f)),
+                                    shape = RoundedCornerShape(8.dp)
                                 ) {
-                                    Text(text = origin, fontSize = 12.sp, color = PaoAnthracite)
                                     Text(
-                                        text = "$count ($pct%)",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = PaoAnthracite
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(6.dp)
-                                        .clip(RoundedCornerShape(3.dp))
-                                        .background(PaoBorderLight)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth((pct / 100f).coerceIn(0f, 1f))
-                                            .height(6.dp)
-                                            .clip(RoundedCornerShape(3.dp))
-                                            .background(if (count > 0) PaoRed else Color.Transparent)
+                                        text = uiState.dateValidationError!!,
+                                        fontSize = 11.sp,
+                                        color = StatusRed,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                                     )
                                 }
                             }
-                        }
-                    }
-                }
-            }
 
-            // Hoster Performance
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .border(1.dp, PaoBorder, RoundedCornerShape(16.dp)),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "Desempenho por Hoster",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = PaoAnthracite
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
 
-                        if (metrics.hosterPerformance.isEmpty()) {
-                            Text(
-                                text = "Nenhum atendimento registrado no período.",
-                                fontSize = 12.sp,
-                                color = PaoAnthraciteMuted
-                            )
-                        } else {
-                            metrics.hosterPerformance.forEach { (name, totalPpl) ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Person, contentDescription = null, tint = PaoRed, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(text = name, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = PaoAnthracite)
-                                    }
-                                    Text(
-                                        text = "$totalPpl pessoas",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = PaoAnthracite
-                                    )
-                                }
+                            Button(
+                                onClick = { viewModel.applyDraftFilters(actorId, actorName) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = PaoRed,
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                                    .testTag("btn_aplicar_filtros")
+                            ) {
+                                Icon(Icons.Default.FilterList, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Aplicar filtros", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                             }
-                        }
-                    }
-                }
-            }
 
-            // Turnos em Aberto (com aviso se bloquear exportação)
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .border(1.dp, if (uiState.openShifts.isNotEmpty()) StatusAmber else PaoBorder, RoundedCornerShape(16.dp)),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "Turnos em Aberto (${uiState.openShifts.size})",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = PaoAnthracite
-                            )
-                            if (uiState.openShifts.isNotEmpty()) {
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = StatusAmber.copy(alpha = 0.15f)
-                                ) {
-                                    Text(
-                                        text = "Bloqueia Exportação",
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = StatusAmber,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                        }
+                            Spacer(modifier = Modifier.height(12.dp))
 
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        if (uiState.openShifts.isEmpty()) {
                             Text(
-                                text = "Todos os turnos estão devidamente encerrados. Exportação liberada.",
-                                fontSize = 12.sp,
-                                color = StatusGreen,
-                                fontWeight = FontWeight.Medium
-                            )
-                        } else {
-                            Text(
-                                text = "Turnos abertos que precisam ser encerrados antes do fechamento:",
+                                text = "Atalhos de período",
                                 fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
                                 color = PaoAnthraciteMuted
                             )
                             Spacer(modifier = Modifier.height(6.dp))
-                            uiState.openShifts.forEach { s ->
-                                Surface(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 4.dp),
-                                    color = PaoCreamLight,
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(10.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween
+
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                DateFilterOption.values().forEach { opt ->
+                                    val isSelected = uiState.filter.dateOption == opt
+                                    Surface(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .clickable { viewModel.setDateFilter(opt, actorId, actorName) }
+                                            .testTag("filter_date_${opt.name.lowercase()}"),
+                                        color = if (isSelected) PaoRed else PaoCreamLight,
+                                        shape = RoundedCornerShape(14.dp)
                                     ) {
-                                        Column {
-                                            Text(text = s.hosterName, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                            Text(
-                                                text = "Turno ${s.period.displayName} • Aberto ${DateTimeUtils.formatTime(s.openedAt)}",
-                                                fontSize = 11.sp,
-                                                color = PaoAnthraciteMuted
-                                            )
+                                        Text(
+                                            text = opt.label,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) Color.White else PaoAnthracite,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            HorizontalDivider(
+                                color = PaoBorderLight,
+                                modifier = Modifier.padding(vertical = 12.dp)
+                            )
+
+                            // Turno & Preferencial
+                            Text(
+                                text = "Turno e Preferência",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = PaoAnthraciteMuted
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                FilterChipPill("Todos Turnos", uiState.filter.selectedPeriod == null) {
+                                    viewModel.setPeriodFilter(null)
+                                }
+                                FilterChipPill("Manhã", uiState.filter.selectedPeriod == "MANHA") {
+                                    viewModel.setPeriodFilter("MANHA")
+                                }
+                                FilterChipPill("Noite", uiState.filter.selectedPeriod == "NOITE") {
+                                    viewModel.setPeriodFilter("NOITE")
+                                }
+                                FilterChipPill("★ Preferencial", uiState.filter.preferentialOnly) {
+                                    viewModel.togglePreferentialFilter()
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // Classificação
+                            Text(
+                                text = "Classificação",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = PaoAnthraciteMuted
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                FilterChipPill("Todas", uiState.filter.selectedClassification == null) {
+                                    viewModel.setClassificationFilter(null)
+                                }
+                                FilterChipPill("Novos", uiState.filter.selectedClassification == "NOVO") {
+                                    viewModel.setClassificationFilter("NOVO")
+                                }
+                                FilterChipPill("Recorrentes", uiState.filter.selectedClassification == "RECORRENTE") {
+                                    viewModel.setClassificationFilter("RECORRENTE")
+                                }
+                            }
+
+                            // Hoster filter
+                            if (uiState.availableHosters.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = "Hoster",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = PaoAnthraciteMuted
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    FilterChipPill("Todos Hosters", uiState.filter.selectedHosterId == null) {
+                                        viewModel.setHosterFilter(null)
+                                    }
+                                    uiState.availableHosters.forEach { hosterItem ->
+                                        FilterChipPill(
+                                            title = hosterItem.name,
+                                            isSelected = uiState.filter.selectedHosterId == hosterItem.id
+                                        ) {
+                                            viewModel.setHosterFilter(hosterItem.id)
                                         }
-                                        Text(text = "Aberto", fontSize = 11.sp, color = StatusAmber, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+
+                            // Origem filter
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Origem",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = PaoAnthraciteMuted
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                FilterChipPill("Todas Origens", uiState.filter.selectedOrigin == null) {
+                                    viewModel.setOriginFilter(null)
+                                }
+                                ClientOrigins.ALL.forEach { orig ->
+                                    FilterChipPill(
+                                        title = orig,
+                                        isSelected = uiState.filter.selectedOrigin == orig
+                                    ) {
+                                        viewModel.setOriginFilter(orig)
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            // Export Section
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .border(1.dp, PaoBorder, RoundedCornerShape(16.dp)),
-                    colors = CardDefaults.cardColors(containerColor = PaoCreamLight),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Download, contentDescription = null, tint = PaoRed, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
+                // Key Metrics Grid
+                item {
+                    Text(
+                        text = "Indicadores Principais",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PaoAnthracite
+                    )
+                }
+
+                item {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        AdminMetricCard(
+                            title = "Pessoas Atendidas",
+                            value = metrics.totalPeople.toString(),
+                            subtitle = "${metrics.totalAttendances} atendimentos",
+                            modifier = Modifier.weight(1f)
+                        )
+                        AdminMetricCard(
+                            title = "Clientes Novos",
+                            value = metrics.totalNewClients.toString(),
+                            valueColor = StatusGreen,
+                            subtitle = "${if (metrics.totalPeople > 0) (metrics.totalNewClients * 100 / metrics.totalPeople) else 0}% do total",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                item {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        AdminMetricCard(
+                            title = "Recorrentes",
+                            value = metrics.totalReturningClients.toString(),
+                            subtitle = "Clientes fiéis",
+                            modifier = Modifier.weight(1f)
+                        )
+                        AdminMetricCard(
+                            title = "Preferencial (★)",
+                            value = metrics.preferentialCount.toString(),
+                            valueColor = StatusAmber,
+                            subtitle = "Atendimentos prioritários",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                item {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        AdminMetricCard(
+                            title = "Clientes Manhã",
+                            value = metrics.morningAttendances.toString(),
+                            subtitle = "Turno Manhã",
+                            modifier = Modifier.weight(1f)
+                        )
+                        AdminMetricCard(
+                            title = "Clientes Noite",
+                            value = metrics.nightAttendances.toString(),
+                            subtitle = "Turno Noite",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                // Distribution of new clients by origin
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, PaoBorder, RoundedCornerShape(16.dp)),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                text = "Gerar Planilha Gerencial (.xlsx)",
+                                text = "De Onde Conheceram (Clientes Novos)",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = PaoAnthracite
                             )
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Gera uma planilha Excel com 3 abas completas (Atendimentos, Clientes Detalhado e Resumo Diário & Origens com separação por dia e consolidação geral).",
-                            fontSize = 12.sp,
-                            color = PaoAnthraciteMuted
-                        )
-                        Spacer(modifier = Modifier.height(14.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
 
-                        PaoPrimaryButton(
-                            text = "Gerar Relatório XLSX",
-                            onClick = { viewModel.exportExcel() },
-                            isLoading = uiState.isExporting,
-                            testTag = "btn_exportar_excel"
-                        )
+                            val totalOriginNew = metrics.originDistribution.values.sum().coerceAtLeast(1)
+                            ClientOrigins.ALL.forEach { origin ->
+                                val count = metrics.originDistribution[origin] ?: 0
+                                val pct = (count * 100) / totalOriginNew
+
+                                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(text = origin, fontSize = 12.sp, color = PaoAnthracite)
+                                        Text(
+                                            text = "$count ($pct%)",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = PaoAnthracite
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(6.dp)
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(PaoBorderLight)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth((pct / 100f).coerceIn(0f, 1f))
+                                                .height(6.dp)
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(if (count > 0) PaoRed else Color.Transparent)
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-            }
 
-            item {
-                Spacer(modifier = Modifier.height(20.dp))
+                // Hoster Performance
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, PaoBorder, RoundedCornerShape(16.dp)),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "Desempenho por Hoster",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = PaoAnthracite
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            if (metrics.hosterPerformance.isEmpty()) {
+                                Text(
+                                    text = "Nenhum atendimento registrado no período.",
+                                    fontSize = 12.sp,
+                                    color = PaoAnthraciteMuted
+                                )
+                            } else {
+                                metrics.hosterPerformance.forEach { (name, totalPpl) ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.Person, contentDescription = null, tint = PaoRed, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(text = name, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = PaoAnthracite)
+                                        }
+                                        Text(
+                                            text = "$totalPpl pessoas",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = PaoAnthracite
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Turnos em Aberto
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, if (uiState.openShifts.isNotEmpty()) StatusAmber else PaoBorder, RoundedCornerShape(16.dp)),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Turnos em Aberto (${uiState.openShifts.size})",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = PaoAnthracite
+                                )
+                                if (uiState.openShifts.isNotEmpty()) {
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = StatusAmber.copy(alpha = 0.15f)
+                                    ) {
+                                        Text(
+                                            text = "Bloqueia Exportação",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = StatusAmber,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            if (uiState.openShifts.isEmpty()) {
+                                Text(
+                                    text = "Todos os turnos estão devidamente encerrados. Exportação liberada.",
+                                    fontSize = 12.sp,
+                                    color = StatusGreen,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            } else {
+                                Text(
+                                    text = "Turnos abertos que precisam ser encerrados antes do fechamento:",
+                                    fontSize = 11.sp,
+                                    color = PaoAnthraciteMuted
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                uiState.openShifts.forEach { s ->
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp),
+                                        color = PaoCreamLight,
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(10.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column {
+                                                Text(text = s.hosterName, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                Text(
+                                                    text = "Turno ${s.period.displayName} • Aberto ${DateTimeUtils.formatTime(s.openedAt)}",
+                                                    fontSize = 11.sp,
+                                                    color = PaoAnthraciteMuted
+                                                )
+                                            }
+                                            Text(text = "Aberto", fontSize = 11.sp, color = StatusAmber, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Export Section
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, PaoBorder, RoundedCornerShape(16.dp)),
+                        colors = CardDefaults.cardColors(containerColor = PaoCreamLight),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Download, contentDescription = null, tint = PaoRed, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Gerar Planilha Gerencial (.xlsx)",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = PaoAnthracite
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Gera uma planilha Excel com 3 abas completas (Atendimentos, Clientes Detalhado e Resumo Diário & Origens com separação por dia e consolidação geral).",
+                                fontSize = 12.sp,
+                                color = PaoAnthraciteMuted
+                            )
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            PaoPrimaryButton(
+                                text = "Gerar Relatório XLSX",
+                                onClick = { viewModel.exportExcel(actorId, actorName) },
+                                isLoading = uiState.isExporting,
+                                testTag = "btn_exportar_excel"
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    Spacer(modifier = Modifier.height(20.dp))
+                }
             }
         }
     }
 }
 
 @Composable
-private fun PeriodChip(
+private fun DatePickerFieldBox(
+    label: String,
+    dateText: String,
+    initialMillis: Long,
+    onDateSelected: (Long) -> Unit,
+    testTag: String,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    Surface(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable {
+                val cal = Calendar.getInstance().apply { timeInMillis = initialMillis }
+                DatePickerDialog(
+                    context,
+                    { _, y, m, d ->
+                        val sel = Calendar.getInstance().apply {
+                            set(y, m, d)
+                        }
+                        onDateSelected(sel.timeInMillis)
+                    },
+                    cal.get(Calendar.YEAR),
+                    cal.get(Calendar.MONTH),
+                    cal.get(Calendar.DAY_OF_MONTH)
+                ).show()
+            }
+            .testTag(testTag),
+        color = PaoCreamLight,
+        border = BorderStroke(1.dp, PaoBorder),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.CalendarToday,
+                contentDescription = label,
+                tint = PaoRed,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column {
+                Text(label, fontSize = 10.sp, color = PaoAnthraciteMuted)
+                Text(
+                    dateText,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = PaoAnthracite
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterChipPill(
     title: String,
     isSelected: Boolean,
     onClick: () -> Unit
@@ -922,7 +1160,13 @@ private fun AdminMetricCard(
         Column(modifier = Modifier.padding(14.dp)) {
             Text(text = title, fontSize = 12.sp, color = PaoAnthraciteMuted)
             Spacer(modifier = Modifier.height(4.dp))
-            Text(text = value, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = valueColor)
+            AnimatedContent(
+                targetState = value,
+                transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
+                label = "metric_value"
+            ) { animatedVal ->
+                Text(text = animatedVal, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = valueColor)
+            }
             Spacer(modifier = Modifier.height(2.dp))
             Text(text = subtitle, fontSize = 11.sp, color = PaoAnthraciteMuted)
         }

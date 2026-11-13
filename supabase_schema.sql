@@ -53,6 +53,10 @@ CREATE TABLE IF NOT EXISTS public.attendances (
     new_members INTEGER NOT NULL CHECK (new_members >= 0),
     returning_members INTEGER NOT NULL CHECK (returning_members >= 0),
     is_preferential BOOLEAN NOT NULL DEFAULT false,
+    is_deleted BOOLEAN NOT NULL DEFAULT false,
+    deleted_at TIMESTAMPTZ,
+    deleted_by TEXT,
+    deletion_reason TEXT,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT check_members_sum CHECK (new_members + returning_members = total_members),
@@ -64,6 +68,7 @@ CREATE TABLE IF NOT EXISTS public.attendances (
 CREATE INDEX IF NOT EXISTS idx_attendances_shift ON public.attendances(shift_id);
 CREATE INDEX IF NOT EXISTS idx_attendances_hoster ON public.attendances(hoster_id);
 CREATE INDEX IF NOT EXISTS idx_attendances_created_at ON public.attendances(created_at);
+CREATE INDEX IF NOT EXISTS idx_attendances_is_deleted ON public.attendances(is_deleted);
 
 -- ------------------------------------------------------------------------------
 -- 4. TABELA: attendance_members (Integrantes individuais dos atendimentos)
@@ -114,6 +119,49 @@ CREATE TABLE IF NOT EXISTS public.queue_events (
 CREATE INDEX IF NOT EXISTS idx_queue_shift ON public.queue_events(shift_id);
 CREATE INDEX IF NOT EXISTS idx_queue_created_at ON public.queue_events(created_at);
 
+-- ------------------------------------------------------------------------------
+-- 7. TABELA: app_releases (Controle de versões e distribuição de APK)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.app_releases (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    version_name TEXT NOT NULL,
+    version_code INTEGER NOT NULL,
+    min_supported_code INTEGER NOT NULL,
+    mandatory BOOLEAN NOT NULL DEFAULT false,
+    apk_path TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    changelog TEXT NOT NULL DEFAULT '',
+    release_reason TEXT NOT NULL DEFAULT '',
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_releases_active_code
+    ON public.app_releases(active, version_code DESC);
+
+-- ------------------------------------------------------------------------------
+-- 8. TABELA: system_logs (Logs centralizados de auditoria operacional)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.system_logs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    user_name TEXT,
+    action TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT,
+    device_name TEXT NOT NULL,
+    result TEXT NOT NULL CHECK (result IN ('SUCCESS', 'FAILURE')),
+    description TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    synced_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_system_logs_created_at ON public.system_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_system_logs_user ON public.system_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_system_logs_action ON public.system_logs(action);
+CREATE INDEX IF NOT EXISTS idx_system_logs_device ON public.system_logs(device_name);
+CREATE INDEX IF NOT EXISTS idx_system_logs_result ON public.system_logs(result);
+
 -- ==============================================================================
 -- ROW LEVEL SECURITY (RLS) E POLÍTICAS DE ACESSO
 -- ==============================================================================
@@ -124,6 +172,8 @@ ALTER TABLE public.attendances ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.attendance_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.attendance_audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.queue_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.app_releases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.system_logs ENABLE ROW LEVEL SECURITY;
 
 -- Regras para chave anon pública do app da recepção:
 -- 1. Leitura de hosters ativos para a tela de login
@@ -168,7 +218,7 @@ TO anon, authenticated
 USING (true)
 WITH CHECK (true);
 
--- 4. Atendimentos (attendances): Leitura, Inserção e Atualização (Proibido exclusão!)
+-- 4. Atendimentos (attendances): Leitura, Inserção e Atualização (Exclusão física proibida - apenas Soft Delete via UPDATE!)
 CREATE POLICY "Allow read attendances"
 ON public.attendances FOR SELECT
 TO anon, authenticated
@@ -185,7 +235,7 @@ TO anon, authenticated
 USING (true)
 WITH CHECK (true);
 
--- Previne qualquer deleção de atendimento (Regra Inegociável #11)
+-- Previne qualquer deleção física de atendimento (preserva auditoria de soft delete)
 CREATE POLICY "Prevent delete attendances"
 ON public.attendances FOR DELETE
 TO anon, authenticated
@@ -235,8 +285,68 @@ ON public.queue_events FOR INSERT
 TO anon, authenticated
 WITH CHECK (true);
 
+-- 8. Políticas de versão (app_releases): Leitura pública para verificação de versão
+CREATE POLICY "Allow read active app releases"
+ON public.app_releases FOR SELECT
+TO anon, authenticated
+USING (true);
+
+-- 9. Logs do sistema (system_logs): Append-only (Leitura e Inserção; Proibido alterar/excluir)
+CREATE POLICY "Allow read system logs"
+ON public.system_logs FOR SELECT
+TO anon, authenticated
+USING (true);
+
+CREATE POLICY "Allow insert system logs"
+ON public.system_logs FOR INSERT
+TO anon, authenticated
+WITH CHECK (true);
+
+CREATE POLICY "Prevent update system logs"
+ON public.system_logs FOR UPDATE
+TO anon, authenticated
+USING (false);
+
+CREATE POLICY "Prevent delete system logs"
+ON public.system_logs FOR DELETE
+TO anon, authenticated
+USING (false);
+
 -- ==============================================================================
--- DADOS INICIAIS (SEED) — USUÁRIO ADMINISTRADOR COM SENHA 'admin'
+-- REALTIME E BUCKET DE RELEASES
+-- ==============================================================================
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.attendances;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.shifts;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.queue_events;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.app_releases;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.system_logs;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- ==============================================================================
+-- DADOS INICIAIS (SEED) — USUÁRIO ADMINISTRADOR COM SENHA 'admin' E VERSÃO INICIAL
 -- ==============================================================================
 DELETE FROM public.hosters WHERE id != 'admin';
 
@@ -259,3 +369,16 @@ SET
     is_activated = EXCLUDED.is_activated,
     active = EXCLUDED.active,
     is_admin = EXCLUDED.is_admin;
+
+INSERT INTO public.app_releases (version_name, version_code, min_supported_code, mandatory, apk_path, sha256, changelog, release_reason, active)
+SELECT
+    '1.0',
+    1,
+    1,
+    false,
+    'app-releases/pao-com-carne-v1.0.apk',
+    '',
+    'Versão inicial de operação com versionamento centralizado, soft delete e logs de auditoria.',
+    '',
+    true
+WHERE NOT EXISTS (SELECT 1 FROM public.app_releases WHERE active = true);

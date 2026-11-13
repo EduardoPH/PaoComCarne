@@ -13,14 +13,20 @@ import com.example.data.local.entity.HosterEntity
 import com.example.data.local.entity.QueueEventEntity
 import com.example.data.local.entity.ShiftEntity
 import com.example.data.local.entity.SyncQueueEntity
+import com.example.data.local.entity.SystemLogEntity
 import com.example.data.remote.SupabaseAttendanceDto
 import com.example.data.remote.SupabaseAuditDto
 import com.example.data.remote.SupabaseClient
 import com.example.data.remote.SupabaseHosterDto
 import com.example.data.remote.SupabaseMemberDto
 import com.example.data.remote.SupabaseQueueDto
+import com.example.data.remote.SupabaseRealtimeClient
 import com.example.data.remote.SupabaseShiftDto
+import com.example.data.remote.SupabaseSystemLogDto
+import com.example.data.repository.SystemLogRepository
+import com.example.domain.model.LogResult
 import com.example.domain.model.SyncState
+import com.example.domain.model.SystemLogActions
 import com.example.domain.util.DateTimeUtils
 import com.squareup.moshi.Types
 import kotlinx.coroutines.CoroutineScope
@@ -64,6 +70,52 @@ class SyncManager(private val context: Context) {
         private set
     private var isSyncInProgress = false
 
+    @Volatile
+    private var systemLogRepository: SystemLogRepository? = null
+
+    @Volatile
+    private var onVersionCheckRequested: ((Boolean) -> Unit)? = null
+
+    private val realtimeClient = SupabaseRealtimeClient(
+        context = context,
+        onDataTableChanged = { table, eventType ->
+            scope.launch {
+                log("Atualização em tempo real ($table • $eventType) recebida.")
+                when (table) {
+                    "attendances" -> {
+                        fetchAttendancesFromRemote()
+                        fetchAttendanceMembersFromRemote()
+                    }
+                    "shifts" -> fetchShiftsFromRemote()
+                    "queue_events" -> fetchQueueEventsFromRemote()
+                    "system_logs" -> fetchSystemLogsFromRemote()
+                }
+                systemLogRepository?.recordLog(
+                    action = SystemLogActions.REMOTE_UPDATE_RECEIVED,
+                    entityType = table.uppercase(),
+                    result = LogResult.SUCCESS,
+                    description = "Atualização remota recebida via Realtime na tabela $table ($eventType).",
+                    triggerSync = false
+                )
+            }
+        },
+        onReleaseChanged = {
+            log("Política de versão atualizada no servidor. Validando compatibilidade...")
+            onVersionCheckRequested?.invoke(isOnline)
+        }
+    )
+
+    fun attachDependencies(
+        systemLogRepo: SystemLogRepository,
+        versionCheckCallback: (Boolean) -> Unit
+    ) {
+        this.systemLogRepository = systemLogRepo
+        this.onVersionCheckRequested = versionCheckCallback
+        if (isOnline) {
+            versionCheckCallback(true)
+        }
+    }
+
     init {
         registerNetworkCallback()
         scope.launch {
@@ -72,6 +124,8 @@ class SyncManager(private val context: Context) {
             updatePendingCount()
             if (isOnline) {
                 log("Conexão detectada. Inicializando sincronização e cache...")
+                realtimeClient.start()
+                onVersionCheckRequested?.invoke(true)
                 fetchAllRemoteData()
                 syncPendingQueue()
             } else {
@@ -93,9 +147,21 @@ class SyncManager(private val context: Context) {
 
         connectivityManager.registerNetworkCallback(request, object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                val wasOffline = !isOnline
                 isOnline = true
                 log("Rede online restabelecida. Disparando sincronização...")
+                realtimeClient.start()
                 scope.launch {
+                    if (wasOffline) {
+                        systemLogRepository?.recordLog(
+                            action = SystemLogActions.RECONNECT,
+                            entityType = "SYNC",
+                            result = LogResult.SUCCESS,
+                            description = "Conectividade restabelecida. Iniciando verificação de versão e sincronização.",
+                            triggerSync = false
+                        )
+                    }
+                    onVersionCheckRequested?.invoke(true)
                     fetchAllRemoteData()
                     syncPendingQueue()
                 }
@@ -103,6 +169,7 @@ class SyncManager(private val context: Context) {
 
             override fun onLost(network: Network) {
                 isOnline = false
+                realtimeClient.stop()
                 log("Rede perdida. Dados mantidos em cache local.", isError = true)
                 scope.launch {
                     val count = database.syncQueueDao().getPendingCount()
@@ -180,6 +247,7 @@ class SyncManager(private val context: Context) {
                 fetchAttendancesFromRemote()
                 fetchAttendanceMembersFromRemote()
                 fetchQueueEventsFromRemote()
+                fetchSystemLogsFromRemote()
                 _lastSyncTime.value = System.currentTimeMillis()
             } catch (e: Exception) {
                 log("Erro ao atualizar cache remoto: ${e.message}", isError = true)
@@ -271,8 +339,13 @@ class SyncManager(private val context: Context) {
                 if (response.isSuccessful) {
                     val remoteAttendances = response.body().orEmpty()
                     if (remoteAttendances.isNotEmpty()) {
+                        var conflictCount = 0
                         val entities = remoteAttendances.map { dto ->
                             val local = database.attendanceDao().getAttendanceById(dto.id)
+                            val remoteUpdatedAt = DateTimeUtils.fromIsoUtc(dto.updatedAt)
+                            if (local != null && local.syncStatus == "PENDENTE" && local.updatedAt != remoteUpdatedAt) {
+                                conflictCount++
+                            }
                             AttendanceEntity(
                                 id = dto.id,
                                 shiftId = dto.shiftId,
@@ -283,18 +356,64 @@ class SyncManager(private val context: Context) {
                                 newMembers = dto.newMembers,
                                 returningMembers = dto.returningMembers,
                                 createdAt = DateTimeUtils.fromIsoUtc(dto.createdAt),
-                                updatedAt = DateTimeUtils.fromIsoUtc(dto.updatedAt),
+                                updatedAt = remoteUpdatedAt,
                                 isEdited = local?.isEdited ?: false,
                                 isPreferential = dto.isPreferential,
-                                syncStatus = local?.syncStatus ?: "SINCRONIZADO"
+                                isDeleted = dto.isDeleted || (local?.isDeleted == true && local.syncStatus == "PENDENTE"),
+                                deletedAt = dto.deletedAt?.let { DateTimeUtils.fromIsoUtc(it) } ?: local?.deletedAt,
+                                deletedBy = dto.deletedBy ?: local?.deletedBy,
+                                deletionReason = dto.deletionReason ?: local?.deletionReason,
+                                syncStatus = if (local?.syncStatus == "PENDENTE") "PENDENTE" else "SINCRONIZADO"
                             )
                         }
                         database.attendanceDao().insertOrUpdateAttendances(entities)
                         log("Atendimentos sincronizados em cache (${entities.size} registros).")
+                        if (conflictCount > 0) {
+                            systemLogRepository?.recordLog(
+                                action = SystemLogActions.CONFLICT_DETECTED,
+                                entityType = "ATTENDANCE",
+                                result = LogResult.FAILURE,
+                                description = "Detectados $conflictCount conflito(s) de sincronização entre cache local pendente e servidor.",
+                                triggerSync = false
+                            )
+                        }
                     }
                 }
             } catch (e: Exception) {
                 Log.w("SyncManager", "Remote attendances fetch note: ${e.message}")
+            }
+        }
+    }
+
+    suspend fun fetchSystemLogsFromRemote() {
+        if (!isOnline) return
+        withContext(Dispatchers.IO) {
+            try {
+                val service = SupabaseClient.getService(context)
+                val response = service.getSystemLogs()
+                if (response.isSuccessful) {
+                    val remoteLogs = response.body().orEmpty()
+                    if (remoteLogs.isNotEmpty()) {
+                        val entities = remoteLogs.map { dto ->
+                            SystemLogEntity(
+                                id = dto.id,
+                                userId = dto.userId,
+                                userName = dto.userName,
+                                action = dto.action,
+                                entityType = dto.entityType,
+                                entityId = dto.entityId,
+                                deviceName = dto.deviceName,
+                                result = dto.result,
+                                description = dto.description,
+                                createdAt = DateTimeUtils.fromIsoUtc(dto.createdAt),
+                                syncedAt = dto.syncedAt?.let { DateTimeUtils.fromIsoUtc(it) } ?: System.currentTimeMillis()
+                            )
+                        }
+                        database.systemLogDao().insertLogs(entities)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("SyncManager", "Remote system_logs fetch note: ${e.message}")
             }
         }
     }
@@ -405,6 +524,17 @@ class SyncManager(private val context: Context) {
 
                 _syncState.value = SyncState.SINCRONIZANDO
                 log("Enviando ${pendingList.size} operações pendentes para o Supabase...")
+                val nonLogOpsCount = pendingList.count { it.entityType != "SYSTEM_LOG" }
+                if (nonLogOpsCount > 0) {
+                    systemLogRepository?.recordLog(
+                        action = SystemLogActions.SYNC_STARTED,
+                        entityType = "SYNC",
+                        result = LogResult.SUCCESS,
+                        description = "Sincronização iniciada com $nonLogOpsCount operação(ões) operacional(is) pendente(s).",
+                        triggerSync = false
+                    )
+                }
+
                 val service = SupabaseClient.getService(context)
                 val moshi = SupabaseClient.moshi
 
@@ -457,6 +587,20 @@ class SyncManager(private val context: Context) {
                     }
                 }
 
+                if (nonLogOpsCount > 0) {
+                    systemLogRepository?.recordLog(
+                        action = if (hasError) SystemLogActions.SYNC_FAILED else SystemLogActions.SYNC_FINISHED,
+                        entityType = "SYNC",
+                        result = if (hasError) LogResult.FAILURE else LogResult.SUCCESS,
+                        description = if (hasError) {
+                            "Sincronização concluída com falhas. $remaining item(ns) restante(s) na fila."
+                        } else {
+                            "Sincronização concluída com sucesso ($nonLogOpsCount operação(ões) enviada(s))."
+                        },
+                        triggerSync = false
+                    )
+                }
+
                 // If sync completed without errors, refresh cache
                 if (!hasError) {
                     fetchAllRemoteData()
@@ -464,6 +608,13 @@ class SyncManager(private val context: Context) {
             } catch (e: Exception) {
                 log("Erro no loop de sincronização: ${e.message}", isError = true)
                 _syncState.value = SyncState.ERRO
+                systemLogRepository?.recordLog(
+                    action = SystemLogActions.SYNC_FAILED,
+                    entityType = "SYNC",
+                    result = LogResult.FAILURE,
+                    description = "Erro crítico no loop de sincronização: ${e.message ?: "erro desconhecido"}",
+                    triggerSync = false
+                )
             } finally {
                 isSyncInProgress = false
             }
@@ -579,6 +730,16 @@ class SyncManager(private val context: Context) {
             }
             "HOSTER_DELETE" -> {
                 val res = service.deleteHoster("eq.${op.entityId}")
+                res.isSuccessful
+            }
+            "SYSTEM_LOG" -> {
+                val adapter = moshi.adapter(SupabaseSystemLogDto::class.java)
+                val dto = adapter.fromJson(op.payloadJson) ?: return false
+                val nowIso = DateTimeUtils.toIsoUtc(System.currentTimeMillis())
+                val res = service.upsertSystemLog(dto.copy(syncedAt = nowIso))
+                if (res.isSuccessful) {
+                    database.systemLogDao().markSynced(dto.id, System.currentTimeMillis())
+                }
                 res.isSuccessful
             }
             else -> true

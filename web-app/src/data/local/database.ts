@@ -1,4 +1,5 @@
 import type {
+  AppReleasePolicy,
   Attendance,
   AttendanceAudit,
   AttendanceMember,
@@ -6,10 +7,11 @@ import type {
   QueueEvent,
   Shift,
   SyncQueueItem,
+  SystemLog,
 } from '../../domain/models';
 
 const DB_NAME = 'pao_com_carne_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export type StoreName =
   | 'hosters'
@@ -18,7 +20,9 @@ export type StoreName =
   | 'attendance_members'
   | 'attendance_audit'
   | 'queue_events'
-  | 'sync_queue';
+  | 'sync_queue'
+  | 'system_logs'
+  | 'app_releases';
 
 type StoreMap = {
   hosters: Hoster;
@@ -28,6 +32,8 @@ type StoreMap = {
   attendance_audit: AttendanceAudit;
   queue_events: QueueEvent;
   sync_queue: SyncQueueItem;
+  system_logs: SystemLog;
+  app_releases: AppReleasePolicy;
 };
 
 type Listener = () => void;
@@ -42,6 +48,8 @@ class LocalDatabase {
     attendance_audit: new Map(),
     queue_events: new Map(),
     sync_queue: new Map(),
+    system_logs: new Map(),
+    app_releases: new Map(),
   };
   private nextSyncId = 1;
   private listeners = new Set<Listener>();
@@ -79,6 +87,8 @@ class LocalDatabase {
               { name: 'attendance_audit', keyPath: 'id' },
               { name: 'queue_events', keyPath: 'id' },
               { name: 'sync_queue', keyPath: 'id', autoIncrement: true },
+              { name: 'system_logs', keyPath: 'id' },
+              { name: 'app_releases', keyPath: 'id' },
             ];
             for (const s of stores) {
               if (!db.objectStoreNames.contains(s.name)) {
@@ -240,6 +250,13 @@ class LocalDatabase {
   // --- Attendances ---
   async getAllAttendances(): Promise<Attendance[]> {
     const all = await this.getAllFromStore('attendances');
+    return all
+      .filter((a) => !a.isDeleted)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  async getAllAttendancesIncludingDeleted(): Promise<Attendance[]> {
+    const all = await this.getAllFromStore('attendances');
     return all.sort((a, b) => b.createdAt - a.createdAt);
   }
 
@@ -249,7 +266,9 @@ class LocalDatabase {
 
   async getAttendancesForShift(shiftId: string): Promise<Attendance[]> {
     const all = await this.getAllFromStore('attendances');
-    return all.filter((a) => a.shiftId === shiftId).sort((a, b) => a.createdAt - b.createdAt);
+    return all
+      .filter((a) => a.shiftId === shiftId && !a.isDeleted)
+      .sort((a, b) => a.createdAt - b.createdAt);
   }
 
   async getLastAttendanceForShift(shiftId: string): Promise<Attendance | null> {
@@ -324,6 +343,39 @@ class LocalDatabase {
 
   async insertQueueEvents(events: QueueEvent[]): Promise<void> {
     await this.putManyInStore('queue_events', events);
+  }
+
+  // --- System Logs ---
+  async getAllSystemLogs(limit = 500): Promise<SystemLog[]> {
+    const all = await this.getAllFromStore('system_logs');
+    return all.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+  }
+
+  async insertSystemLog(log: SystemLog): Promise<void> {
+    await this.putManyInStore('system_logs', [log]);
+  }
+
+  async insertSystemLogs(logs: SystemLog[]): Promise<void> {
+    await this.putManyInStore('system_logs', logs);
+  }
+
+  async markSystemLogSynced(id: string, syncedAt: number): Promise<void> {
+    const existing = await this.getByIdFromStore('system_logs', id);
+    if (!existing) return;
+    await this.putManyInStore('system_logs', [{ ...existing, syncedAt }], false);
+  }
+
+  // --- App Releases ---
+  async getLatestAppRelease(): Promise<AppReleasePolicy | null> {
+    const all = await this.getAllFromStore('app_releases');
+    if (all.length === 0) return null;
+    const active = all.filter((r) => r.active);
+    const list = active.length > 0 ? active : all;
+    return list.sort((a, b) => b.versionCode - a.versionCode || b.confirmedAt - a.confirmedAt)[0] ?? null;
+  }
+
+  async upsertAppRelease(policy: AppReleasePolicy): Promise<void> {
+    await this.putManyInStore('app_releases', [policy], false);
   }
 
   // --- Sync Queue ---

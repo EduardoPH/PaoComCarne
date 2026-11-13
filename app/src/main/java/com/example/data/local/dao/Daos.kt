@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
+import com.example.data.local.entity.AppReleaseEntity
 import com.example.data.local.entity.AttendanceAuditEntity
 import com.example.data.local.entity.AttendanceEntity
 import com.example.data.local.entity.AttendanceMemberEntity
@@ -12,6 +13,7 @@ import com.example.data.local.entity.HosterEntity
 import com.example.data.local.entity.QueueEventEntity
 import com.example.data.local.entity.ShiftEntity
 import com.example.data.local.entity.SyncQueueEntity
+import com.example.data.local.entity.SystemLogEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -79,26 +81,29 @@ interface ShiftDao {
 
 @Dao
 interface AttendanceDao {
-    @Query("SELECT * FROM attendances WHERE shiftId = :shiftId ORDER BY createdAt ASC")
+    @Query("SELECT * FROM attendances WHERE shiftId = :shiftId AND isDeleted = 0 ORDER BY createdAt ASC")
     fun getAttendancesForShiftFlow(shiftId: String): Flow<List<AttendanceEntity>>
 
-    @Query("SELECT * FROM attendances WHERE shiftId = :shiftId ORDER BY createdAt ASC")
+    @Query("SELECT * FROM attendances WHERE shiftId = :shiftId AND isDeleted = 0 ORDER BY createdAt ASC")
     suspend fun getAttendancesForShift(shiftId: String): List<AttendanceEntity>
 
-    @Query("SELECT * FROM attendances WHERE shiftId = :shiftId ORDER BY createdAt DESC LIMIT 1")
+    @Query("SELECT * FROM attendances WHERE shiftId = :shiftId AND isDeleted = 0 ORDER BY createdAt DESC LIMIT 1")
     suspend fun getLastAttendanceForShift(shiftId: String): AttendanceEntity?
 
-    @Query("SELECT * FROM attendances WHERE shiftId = :shiftId ORDER BY createdAt DESC LIMIT 1")
+    @Query("SELECT * FROM attendances WHERE shiftId = :shiftId AND isDeleted = 0 ORDER BY createdAt DESC LIMIT 1")
     fun getLastAttendanceForShiftFlow(shiftId: String): Flow<AttendanceEntity?>
 
     @Query("SELECT * FROM attendances WHERE id = :id LIMIT 1")
     suspend fun getAttendanceById(id: String): AttendanceEntity?
 
-    @Query("SELECT * FROM attendances ORDER BY createdAt DESC")
+    @Query("SELECT * FROM attendances WHERE isDeleted = 0 ORDER BY createdAt DESC")
     fun getAllAttendancesFlow(): Flow<List<AttendanceEntity>>
 
-    @Query("SELECT * FROM attendances ORDER BY createdAt DESC")
+    @Query("SELECT * FROM attendances WHERE isDeleted = 0 ORDER BY createdAt DESC")
     suspend fun getAllAttendances(): List<AttendanceEntity>
+
+    @Query("SELECT * FROM attendances ORDER BY createdAt DESC")
+    suspend fun getAllAttendancesIncludingDeleted(): List<AttendanceEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateAttendance(attendance: AttendanceEntity)
@@ -106,7 +111,7 @@ interface AttendanceDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateAttendances(attendances: List<AttendanceEntity>)
 
-    @Query("SELECT COUNT(*) FROM attendances WHERE shiftId = :shiftId")
+    @Query("SELECT COUNT(*) FROM attendances WHERE shiftId = :shiftId AND isDeleted = 0")
     suspend fun countAttendancesInShift(shiftId: String): Int
 }
 
@@ -118,8 +123,11 @@ interface AttendanceMemberDao {
     @Query("SELECT * FROM attendance_members WHERE attendanceId = :attendanceId ORDER BY memberNumber ASC")
     fun getMembersForAttendanceFlow(attendanceId: String): Flow<List<AttendanceMemberEntity>>
 
-    @Query("SELECT * FROM attendance_members")
+    @Query("SELECT m.* FROM attendance_members m INNER JOIN attendances a ON m.attendanceId = a.id WHERE a.isDeleted = 0")
     suspend fun getAllMembers(): List<AttendanceMemberEntity>
+
+    @Query("SELECT * FROM attendance_members")
+    suspend fun getAllMembersIncludingDeleted(): List<AttendanceMemberEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMembers(members: List<AttendanceMemberEntity>)
@@ -186,4 +194,37 @@ interface SyncQueueDao {
 
     @Query("UPDATE sync_queue SET status = 'PENDING', attempts = 0 WHERE status = 'FAILED'")
     suspend fun resetFailedToPending()
+}
+
+@Dao
+interface SystemLogDao {
+    @Query("SELECT * FROM system_logs ORDER BY createdAt DESC LIMIT 1000")
+    fun getAllLogsFlow(): Flow<List<SystemLogEntity>>
+
+    @Query("SELECT * FROM system_logs ORDER BY createdAt DESC LIMIT 1000")
+    suspend fun getAllLogs(): List<SystemLogEntity>
+
+    @Query("SELECT * FROM system_logs WHERE id = :id LIMIT 1")
+    suspend fun getLogById(id: String): SystemLogEntity?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertLog(log: SystemLogEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertLogs(logs: List<SystemLogEntity>)
+
+    @Query("UPDATE system_logs SET syncedAt = :syncedAt WHERE id = :id")
+    suspend fun markSynced(id: String, syncedAt: Long)
+}
+
+@Dao
+interface AppReleaseDao {
+    @Query("SELECT * FROM app_releases WHERE active = 1 ORDER BY versionCode DESC LIMIT 1")
+    suspend fun getLatestActiveRelease(): AppReleaseEntity?
+
+    @Query("SELECT * FROM app_releases ORDER BY confirmedAt DESC, versionCode DESC LIMIT 1")
+    suspend fun getLatestCachedRelease(): AppReleaseEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrUpdateRelease(release: AppReleaseEntity)
 }

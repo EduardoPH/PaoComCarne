@@ -31,6 +31,10 @@ export interface SupabaseAttendanceDto {
   new_members: number;
   returning_members: number;
   is_preferential: boolean;
+  is_deleted?: boolean;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
+  deletion_reason?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -63,6 +67,33 @@ export interface SupabaseQueueDto {
   created_at: string;
 }
 
+export interface SupabaseSystemLogDto {
+  id: string;
+  user_id?: string | null;
+  user_name?: string | null;
+  action: string;
+  entity_type: string;
+  entity_id?: string | null;
+  device_name: string;
+  result: string;
+  description: string;
+  created_at: string;
+}
+
+export interface SupabaseAppReleaseDto {
+  id: string;
+  version_name: string;
+  version_code: number;
+  min_supported_code: number;
+  mandatory: boolean;
+  apk_path: string;
+  sha256: string;
+  changelog: string;
+  release_reason?: string | null;
+  active: boolean;
+  created_at: string;
+}
+
 export const DEFAULT_SUPABASE_URL = 'https://iodvkbzszlrphuqvywbr.supabase.co';
 export const DEFAULT_ANON_KEY = 'sb_publishable_ld0dSdRWiiFMxikrYyBNmA_VVRABrou';
 
@@ -89,6 +120,15 @@ export function saveSupabaseConfig(url: string, key: string): void {
   if (typeof localStorage === 'undefined') return;
   localStorage.setItem(STORAGE_URL_KEY, url.trim().replace(/\/+$/, ''));
   localStorage.setItem(STORAGE_ANON_KEY, key.trim());
+}
+
+export function buildApkPublicUrl(apkPath: string): string {
+  if (/^https?:\/\//i.test(apkPath.trim())) {
+    return apkPath.trim();
+  }
+  const { url } = getSupabaseConfig();
+  const cleaned = apkPath.trim().replace(/^\/+/, '');
+  return `${url}/storage/v1/object/public/app-releases/${cleaned}`;
 }
 
 async function request<T>(
@@ -201,6 +241,14 @@ export const supabaseClient = {
     );
   },
 
+  async patchAttendance(id: string, body: Record<string, unknown>) {
+    return request<void>(
+      `rest/v1/attendances?id=eq.${encodeURIComponent(id)}`,
+      { method: 'PATCH', body: JSON.stringify(body) },
+      { Prefer: 'return=minimal' }
+    );
+  },
+
   async getAttendanceMembers() {
     return request<SupabaseMemberDto[]>(
       'rest/v1/attendance_members?select=*&order=created_at.asc',
@@ -250,6 +298,28 @@ export const supabaseClient = {
       'rest/v1/queue_events',
       { method: 'POST', body: JSON.stringify(dto) },
       { Prefer: 'return=minimal' }
+    );
+  },
+
+  async getSystemLogs() {
+    return request<SupabaseSystemLogDto[]>(
+      'rest/v1/system_logs?select=*&order=created_at.desc&limit=500',
+      { method: 'GET' }
+    );
+  },
+
+  async upsertSystemLog(dto: SupabaseSystemLogDto) {
+    return request<void>(
+      'rest/v1/system_logs',
+      { method: 'POST', body: JSON.stringify(dto) },
+      { Prefer: 'return=minimal, resolution=merge-duplicates' }
+    );
+  },
+
+  async getActiveAppReleases() {
+    return request<SupabaseAppReleaseDto[]>(
+      'rest/v1/app_releases?select=*&active=eq.true&order=version_code.desc&limit=1',
+      { method: 'GET' }
     );
   },
 };

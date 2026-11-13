@@ -2,7 +2,8 @@ package com.example.data.repository
 
 import android.content.Context
 import com.example.data.local.AppDatabase
-import com.example.domain.model.ShiftStatus
+import com.example.domain.model.LogResult
+import com.example.domain.model.SystemLogActions
 import com.example.domain.util.DateTimeUtils
 import com.example.domain.util.XlsxGenerator
 import kotlinx.coroutines.Dispatchers
@@ -22,7 +23,8 @@ sealed class ExportResult {
 
 class ExportRepository(
     private val context: Context,
-    private val database: AppDatabase
+    private val database: AppDatabase,
+    private val systemLogRepository: SystemLogRepository? = null
 ) {
     private val shiftDao = database.shiftDao()
     private val attendanceDao = database.attendanceDao()
@@ -33,14 +35,28 @@ class ExportRepository(
         startMillis: Long,
         endMillis: Long,
         selectedHosterId: String? = null,
-        selectedShiftPeriod: String? = null
+        selectedShiftPeriod: String? = null,
+        selectedOrigin: String? = null,
+        selectedClassification: String? = null,
+        preferentialOnly: Boolean = false,
+        actorUserId: String? = null,
+        actorUserName: String? = null
     ): ExportResult = withContext(Dispatchers.IO) {
         try {
             // Rule 1: Check pending sync items
             val pendingCount = syncQueueDao.getPendingCount()
             if (pendingCount > 0) {
+                val msg = "Existem $pendingCount registros pendentes de sincronização com o servidor. Sincronize antes de exportar."
+                systemLogRepository?.recordLog(
+                    action = SystemLogActions.REPORT_EXPORT_FAILED,
+                    entityType = "REPORT",
+                    result = LogResult.FAILURE,
+                    description = "Exportação bloqueada por pendência de sincronização ($pendingCount item(ns)).",
+                    userId = actorUserId,
+                    userName = actorUserName
+                )
                 return@withContext ExportResult.Blocked(
-                    reason = "Existem $pendingCount registros pendentes de sincronização com o servidor. Sincronize antes de exportar.",
+                    reason = msg,
                     pendingSyncCount = pendingCount
                 )
             }
@@ -49,31 +65,59 @@ class ExportRepository(
             val openShifts = shiftDao.getOpenShiftsInRange(startMillis, endMillis)
             if (openShifts.isNotEmpty()) {
                 val hosterNames = openShifts.joinToString(", ") { "${it.hosterName} (${it.period})" }
+                val msg = "Existem turnos abertos no período selecionado que impedem o fechamento e a exportação do relatório: $hosterNames. Encerre os turnos primeiro."
+                systemLogRepository?.recordLog(
+                    action = SystemLogActions.REPORT_EXPORT_FAILED,
+                    entityType = "REPORT",
+                    result = LogResult.FAILURE,
+                    description = "Exportação bloqueada por turnos abertos: $hosterNames.",
+                    userId = actorUserId,
+                    userName = actorUserName
+                )
                 return@withContext ExportResult.Blocked(
-                    reason = "Existem turnos abertos no período selecionado que impedem o fechamento e a exportação do relatório: $hosterNames. Encerre os turnos primeiro.",
+                    reason = msg,
                     openShiftsCount = openShifts.size
                 )
             }
 
             val shifts = shiftDao.getAllShifts().associateBy { it.id }
 
-            // Fetch attendances in period
-            val allAttendances = attendanceDao.getAllAttendances()
+            // Fetch active (non-deleted) attendances and all linked members
+            val allAttendances = attendanceDao.getAllAttendances().filter { !it.isDeleted }
+            val allMembersMap = memberDao.getAllMembers().groupBy { it.attendanceId }
+
             val filteredAttendances = allAttendances.filter { att ->
                 val matchDate = att.createdAt in startMillis..endMillis
                 val matchHoster = selectedHosterId == null || att.hosterId == selectedHosterId
                 val shift = shifts[att.shiftId]
                 val matchPeriod = selectedShiftPeriod == null || shift?.period == selectedShiftPeriod
-                matchDate && matchHoster && matchPeriod
+                val matchClass = when (selectedClassification) {
+                    "NOVO" -> att.newMembers > 0
+                    "RECORRENTE" -> att.returningMembers > 0
+                    else -> true
+                }
+                val matchPref = !preferentialOnly || att.isPreferential
+                val members = allMembersMap[att.id].orEmpty()
+                val matchOrigin = selectedOrigin == null || members.any {
+                    it.classification == "NOVO" && it.origin.equals(selectedOrigin, ignoreCase = true)
+                }
+                matchDate && matchHoster && matchPeriod && matchClass && matchPref && matchOrigin
             }.sortedBy { it.createdAt }
 
             if (filteredAttendances.isEmpty()) {
-                return@withContext ExportResult.Failure("Nenhum atendimento encontrado para os critérios e período selecionados.")
+                val msg = "Nenhum atendimento encontrado para os critérios e período selecionados."
+                systemLogRepository?.recordLog(
+                    action = SystemLogActions.REPORT_EXPORT_FAILED,
+                    entityType = "REPORT",
+                    result = LogResult.FAILURE,
+                    description = "Exportação sem resultados para os filtros informados.",
+                    userId = actorUserId,
+                    userName = actorUserName
+                )
+                return@withContext ExportResult.Failure(msg)
             }
 
-            val attendanceIds = filteredAttendances.map { it.id }.toSet()
-            val allMembers = memberDao.getAllMembers().filter { it.attendanceId in attendanceIds }
-            val memberMap = allMembers.groupBy { it.attendanceId }
+            val memberMap = allMembersMap
 
             // Build Aba 1 rows (Atendimentos)
             val attendanceRows = filteredAttendances.map { att ->
@@ -178,6 +222,16 @@ class ExportRepository(
 
             XlsxGenerator.generateWorkbook(targetFile, attendanceRows, clientRows, consolidatedSummary)
 
+            systemLogRepository?.recordLog(
+                action = SystemLogActions.REPORT_EXPORTED,
+                entityType = "REPORT",
+                entityId = fileName,
+                result = LogResult.SUCCESS,
+                description = "Relatório XLSX gerado: ${attendanceRows.size} atendimento(s), $grandTotalClients cliente(s).",
+                userId = actorUserId,
+                userName = actorUserName
+            )
+
             ExportResult.Success(
                 file = targetFile,
                 fileName = fileName,
@@ -185,7 +239,16 @@ class ExportRepository(
                 totalClients = grandTotalClients
             )
         } catch (e: Exception) {
-            ExportResult.Failure(e.message ?: "Erro desconhecido ao gerar arquivo Excel.")
+            val err = e.message ?: "Erro desconhecido ao gerar arquivo Excel."
+            systemLogRepository?.recordLog(
+                action = SystemLogActions.REPORT_EXPORT_FAILED,
+                entityType = "REPORT",
+                result = LogResult.FAILURE,
+                description = "Erro ao gerar relatório XLSX: $err",
+                userId = actorUserId,
+                userName = actorUserName
+            )
+            ExportResult.Failure(err)
         }
     }
 }

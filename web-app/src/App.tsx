@@ -2,13 +2,16 @@ import { useState } from 'react';
 import { BarChart3, Clock, Eye, Store } from 'lucide-react';
 import { useApp } from './context/AppContext';
 import { authRepository } from './data/repositories/authRepository';
+import { updateService } from './data/update/updateService';
 import { BrandLogoBox } from './presentation/components/CommonComponents';
 import { FloatingInstallButton } from './presentation/components/FloatingInstallButton';
+import { OptionalUpdateBanner } from './presentation/components/OptionalUpdateBanner';
 import { SyncLogsModal } from './presentation/components/SyncLogsModal';
 import { AdminScreen } from './presentation/screens/AdminScreen';
 import { HostersManagementScreen } from './presentation/screens/HostersManagementScreen';
 import { InspectionScreen } from './presentation/screens/InspectionScreen';
 import { LoginScreen } from './presentation/screens/LoginScreen';
+import { MandatoryUpdateScreen } from './presentation/screens/MandatoryUpdateScreen';
 import { ReceptionScreen } from './presentation/screens/ReceptionScreen';
 import { ShiftScreen } from './presentation/screens/ShiftScreen';
 
@@ -27,8 +30,18 @@ const TABS: {
 ];
 
 export default function App() {
-  const { ready, currentHoster, showSyncLogsModal, setShowSyncLogsModal, snackbarMessage } =
-    useApp();
+  const {
+    ready,
+    currentHoster,
+    sync,
+    updateState,
+    recheckVersion,
+    applyWebUpdate,
+    dismissOptionalUpdateBanner,
+    showSyncLogsModal,
+    setShowSyncLogsModal,
+    snackbarMessage,
+  } = useApp();
   const [selectedTab, setSelectedTab] = useState<AppTab>('RECEPCAO');
 
   return (
@@ -50,18 +63,52 @@ export default function App() {
               Carregando Sistema de Recepção...
             </div>
           </div>
+        ) : updateState.isBlocked ? (
+          <MandatoryUpdateScreen
+            state={updateState}
+            isOnline={sync.isOnline}
+            apkUrl={updateService.getApkDownloadUrl()}
+            onApplyWebUpdate={() => void applyWebUpdate()}
+            onRecheckVersion={() => void recheckVersion()}
+          />
         ) : !currentHoster ? (
-          <LoginScreen />
+          <div className="screen-transition" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <OptionalUpdateBanner
+              state={updateState}
+              onUpdateClick={() => void applyWebUpdate()}
+              onDismiss={dismissOptionalUpdateBanner}
+            />
+            <LoginScreen />
+          </div>
         ) : currentHoster.isAdmin ? (
-          <HostersManagementScreen onLogout={() => authRepository.logout()} />
+          <div className="screen-transition" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <OptionalUpdateBanner
+              state={updateState}
+              onUpdateClick={() => void applyWebUpdate()}
+              onDismiss={dismissOptionalUpdateBanner}
+            />
+            <HostersManagementScreen onLogout={() => authRepository.logout()} />
+          </div>
         ) : (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            {/* Active Screen Content */}
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <OptionalUpdateBanner
+              state={updateState}
+              onUpdateClick={() => void applyWebUpdate()}
+              onDismiss={dismissOptionalUpdateBanner}
+            />
+
+            {/* Active Screen Content with transition */}
+            <div
+              key={selectedTab}
+              className="screen-transition"
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+            >
               {selectedTab === 'RECEPCAO' && <ReceptionScreen />}
               {selectedTab === 'INSPECAO' && <InspectionScreen />}
               {selectedTab === 'ADMINISTRACAO' && <AdminScreen />}
-              {selectedTab === 'TURNO' && <ShiftScreen />}
+              {selectedTab === 'TURNO' && (
+                <ShiftScreen onShiftClosed={() => setSelectedTab('ADMINISTRACAO')} />
+              )}
             </div>
 
             {/* Persistent Bottom Navigation Bar matching Material 3 MainActivity.kt */}
@@ -167,7 +214,7 @@ export default function App() {
         )}
 
         {/* Floating App Download/Install Corner Pill */}
-        {ready && (
+        {ready && !updateState.isBlocked && (
           <FloatingInstallButton
             hasBottomBar={Boolean(currentHoster && !currentHoster.isAdmin)}
           />

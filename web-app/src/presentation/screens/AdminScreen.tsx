@@ -5,6 +5,7 @@ import {
   CheckCircle,
   Download,
   Filter,
+  History,
   Share2,
   User,
 } from 'lucide-react';
@@ -14,40 +15,31 @@ import {
   exportReport,
   shareOrDownloadXlsx,
 } from '../../data/repositories/exportRepository';
+import { systemLogRepository } from '../../data/repositories/systemLogRepository';
 import { syncManager } from '../../data/sync/syncManager';
 import {
   ClientOrigins,
   ShiftPeriodDisplay,
+  SystemLogActions,
+  type LogResult,
   type ShiftPeriod,
 } from '../../domain/models';
 import {
-  formatDate,
-  formatTime,
-  fromInputDateValue,
-  toInputDateValue,
-} from '../../domain/utils/dateTime';
+  computeAdminMetrics,
+  DATE_OPTIONS,
+  endOfDay,
+  filterSystemLogs,
+  getPeriodDisplayLabel,
+  rangeForOption,
+  startOfDay,
+  validateDateRange,
+  type AdminFilterState,
+  type DateFilterOption,
+  type SystemLogsFilterState,
+} from '../../domain/utils/adminFilters';
+import { formatTime, fromInputDateValue, toInputDateValue } from '../../domain/utils/dateTime';
 import { PaoPrimaryButton, SyncStatusPill } from '../components/CommonComponents';
-
-type DateFilterOption =
-  | 'HOJE'
-  | 'ONTEM'
-  | 'ULTIMOS_7_DIAS'
-  | 'ULTIMOS_30_DIAS'
-  | 'MES_ATUAL'
-  | 'DIA_ESPECIFICO'
-  | 'INTERVALO_PERSONALIZADO'
-  | 'TODOS';
-
-const DATE_OPTIONS: { id: DateFilterOption; label: string }[] = [
-  { id: 'HOJE', label: 'Hoje' },
-  { id: 'ONTEM', label: 'Ontem' },
-  { id: 'ULTIMOS_7_DIAS', label: 'Últimos 7 dias' },
-  { id: 'ULTIMOS_30_DIAS', label: 'Últimos 30 dias' },
-  { id: 'MES_ATUAL', label: 'Mês atual' },
-  { id: 'DIA_ESPECIFICO', label: 'Dia específico' },
-  { id: 'INTERVALO_PERSONALIZADO', label: 'Início e Fim' },
-  { id: 'TODOS', label: 'Todo o período' },
-];
+import { SystemLogItemCard, SystemLogsFilterCard } from '../components/SystemLogsSection';
 
 interface ExportSuccessData {
   bytes: Uint8Array;
@@ -57,105 +49,46 @@ interface ExportSuccessData {
   periodLabel: string;
 }
 
-function startOfDay(d: Date): number {
-  const c = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-  return c.getTime();
-}
-
-function endOfDay(d: Date): number {
-  const c = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
-  return c.getTime();
-}
-
-function computeDateRange(
-  dateOption: DateFilterOption,
-  specificDateMillis: number,
-  customStartMillis: number,
-  customEndMillis: number
-): [number, number] {
-  const now = new Date();
-  switch (dateOption) {
-    case 'HOJE':
-      return [startOfDay(now), endOfDay(now)];
-    case 'ONTEM': {
-      const y = new Date(now);
-      y.setDate(y.getDate() - 1);
-      return [startOfDay(y), endOfDay(y)];
-    }
-    case 'ULTIMOS_7_DIAS': {
-      const start = new Date(now);
-      start.setDate(start.getDate() - 6);
-      return [startOfDay(start), endOfDay(now)];
-    }
-    case 'ULTIMOS_30_DIAS': {
-      const start = new Date(now);
-      start.setDate(start.getDate() - 29);
-      return [startOfDay(start), endOfDay(now)];
-    }
-    case 'MES_ATUAL': {
-      const first = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-      return [first.getTime(), last.getTime()];
-    }
-    case 'DIA_ESPECIFICO': {
-      const d = new Date(specificDateMillis);
-      return [startOfDay(d), endOfDay(d)];
-    }
-    case 'INTERVALO_PERSONALIZADO': {
-      const s = new Date(customStartMillis);
-      const e = new Date(customEndMillis);
-      return [startOfDay(s), endOfDay(e)];
-    }
-    case 'TODOS':
-      return [0, Number.MAX_SAFE_INTEGER];
-  }
-}
-
-function getPeriodLabel(
-  dateOption: DateFilterOption,
-  specificDateMillis: number,
-  customStartMillis: number,
-  customEndMillis: number,
-  selectedPeriod: ShiftPeriod | null
-): string {
-  const periodStr =
-    selectedPeriod === 'MANHA'
-      ? ' (Turno Manhã)'
-      : selectedPeriod === 'NOITE'
-        ? ' (Turno Noite)'
-        : '';
-
-  switch (dateOption) {
-    case 'HOJE':
-      return `Hoje${periodStr}`;
-    case 'ONTEM':
-      return `Ontem${periodStr}`;
-    case 'ULTIMOS_7_DIAS':
-      return `Últimos 7 dias${periodStr}`;
-    case 'ULTIMOS_30_DIAS':
-      return `Últimos 30 dias${periodStr}`;
-    case 'MES_ATUAL':
-      return `Mês atual${periodStr}`;
-    case 'DIA_ESPECIFICO':
-      return `${formatDate(specificDateMillis)}${periodStr}`;
-    case 'INTERVALO_PERSONALIZADO':
-      return `${formatDate(customStartMillis)} até ${formatDate(customEndMillis)}${periodStr}`;
-    case 'TODOS':
-      return `Todo o período${periodStr}`;
-  }
-}
+type AdminSubTab = 'INDICADORES' | 'LOGS';
 
 export function AdminScreen() {
-  const { allShifts, allAttendances, allMembers, sync, setShowSyncLogsModal } = useApp();
+  const {
+    currentHoster,
+    hosters,
+    allShifts,
+    allAttendances,
+    allMembers,
+    systemLogs,
+    sync,
+    setShowSyncLogsModal,
+  } = useApp();
 
-  const [dateOption, setDateOption] = useState<DateFilterOption>('HOJE');
-  const [specificDateMillis, setSpecificDateMillis] = useState<number>(() => Date.now());
-  const [customStartMillis, setCustomStartMillis] = useState<number>(
-    () => Date.now() - 7 * 86400000
-  );
-  const [customEndMillis, setCustomEndMillis] = useState<number>(() => Date.now());
-  const [selectedPeriod, setSelectedPeriod] = useState<ShiftPeriod | null>(null);
-  const [preferentialOnly, setPreferentialOnly] = useState(false);
+  const [activeSubTab, setActiveSubTab] = useState<AdminSubTab>('INDICADORES');
+  const [filter, setFilter] = useState<AdminFilterState>(() => {
+    const now = Date.now();
+    return {
+      dateOption: 'HOJE',
+      draftStartMillis: startOfDay(now),
+      draftEndMillis: endOfDay(now),
+      appliedStartMillis: startOfDay(now),
+      appliedEndMillis: endOfDay(now),
+      selectedHosterId: null,
+      selectedPeriod: null,
+      selectedOrigin: null,
+      selectedClassification: null,
+      preferentialOnly: false,
+    };
+  });
+  const [dateValidationError, setDateValidationError] = useState<string | null>(null);
+
+  const [logsFilter, setLogsFilter] = useState<SystemLogsFilterState>({
+    startMillis: null,
+    endMillis: null,
+    selectedUser: null,
+    selectedAction: null,
+    selectedDevice: null,
+    selectedResult: null,
+  });
 
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccessData, setExportSuccessData] = useState<ExportSuccessData | null>(null);
@@ -163,67 +96,31 @@ export function AdminScreen() {
 
   useEffect(() => {
     void syncManager.triggerSync();
+    systemLogRepository.logAsync({
+      action: SystemLogActions.ADMIN_ACCESS,
+      entityType: 'ADMIN',
+      result: 'SUCCESS',
+      description: 'Acesso ao painel Administrativo.',
+      userId: currentHoster?.id ?? null,
+      userName: currentHoster?.name ?? null,
+    });
   }, []);
 
-  const [startMillis, endMillis] = useMemo(
-    () => computeDateRange(dateOption, specificDateMillis, customStartMillis, customEndMillis),
-    [dateOption, specificDateMillis, customStartMillis, customEndMillis]
+  const activePeriodSummary = useMemo(() => getPeriodDisplayLabel(filter), [filter]);
+
+  const metrics = useMemo(
+    () => computeAdminMetrics(allShifts, allAttendances, allMembers, filter),
+    [allShifts, allAttendances, allMembers, filter]
   );
-
-  const metrics = useMemo(() => {
-    const shiftsById = new Map(allShifts.map((s) => [s.id, s]));
-    const filtered = allAttendances.filter((att) => {
-      const matchDate = att.createdAt >= startMillis && att.createdAt <= endMillis;
-      const shift = shiftsById.get(att.shiftId);
-      const matchPeriod = selectedPeriod === null || shift?.period === selectedPeriod;
-      const matchPref = !preferentialOnly || att.isPreferential;
-      return matchDate && matchPeriod && matchPref;
-    });
-
-    const membersByAtt = new Map<string, typeof allMembers>();
-    for (const m of allMembers) {
-      const list = membersByAtt.get(m.attendanceId) ?? [];
-      list.push(m);
-      membersByAtt.set(m.attendanceId, list);
-    }
-
-    const originDist: Record<string, number> = {};
-    const hosterPerf: Record<string, number> = {};
-    let morningClients = 0;
-    let nightClients = 0;
-    let prefCount = 0;
-
-    for (const att of filtered) {
-      hosterPerf[att.hosterName] = (hosterPerf[att.hosterName] ?? 0) + att.totalMembers;
-      const shift = shiftsById.get(att.shiftId);
-      if (shift?.period === 'MANHA') morningClients += att.totalMembers;
-      if (shift?.period === 'NOITE') nightClients += att.totalMembers;
-      if (att.isPreferential) prefCount += 1;
-
-      const members = membersByAtt.get(att.id) ?? [];
-      for (const m of members) {
-        if (m.classification === 'NOVO' && m.origin && m.origin.trim()) {
-          originDist[m.origin] = (originDist[m.origin] ?? 0) + 1;
-        }
-      }
-    }
-
-    return {
-      totalPeople: filtered.reduce((s, a) => s + a.totalMembers, 0),
-      totalNewClients: filtered.reduce((s, a) => s + a.newMembers, 0),
-      totalReturningClients: filtered.reduce((s, a) => s + a.returningMembers, 0),
-      totalAttendances: filtered.length,
-      preferentialCount: prefCount,
-      morningClients,
-      nightClients,
-      originDistribution: originDist,
-      hosterPerformance: hosterPerf,
-    };
-  }, [allShifts, allAttendances, allMembers, startMillis, endMillis, selectedPeriod, preferentialOnly]);
 
   const openShifts = useMemo(
     () => allShifts.filter((s) => s.status === 'OPEN'),
     [allShifts]
+  );
+
+  const availableNonAdminHosters = useMemo(
+    () => hosters.filter((h) => !h.isAdmin),
+    [hosters]
   );
 
   const totalOriginNew = Math.max(
@@ -231,24 +128,121 @@ export function AdminScreen() {
     Object.values(metrics.originDistribution).reduce((a, b) => a + b, 0)
   );
 
+  // System logs computed options & filtered list
+  const availableLogUsers = useMemo(
+    () =>
+      Array.from(
+        new Set(systemLogs.map((l) => l.userName).filter((n): n is string => Boolean(n && n.trim())))
+      ).sort(),
+    [systemLogs]
+  );
+  const availableLogActions = useMemo(
+    () => Array.from(new Set(systemLogs.map((l) => l.action))).sort(),
+    [systemLogs]
+  );
+  const availableLogDevices = useMemo(
+    () => Array.from(new Set(systemLogs.map((l) => l.deviceName))).sort(),
+    [systemLogs]
+  );
+  const filteredLogs = useMemo(
+    () => filterSystemLogs(systemLogs, logsFilter),
+    [systemLogs, logsFilter]
+  );
+
+  const logFilterChange = (nextFilter: AdminFilterState) => {
+    systemLogRepository.logAsync({
+      action: SystemLogActions.ADMIN_FILTER_APPLIED,
+      entityType: 'ADMIN',
+      result: 'SUCCESS',
+      description: `Filtros aplicados: ${getPeriodDisplayLabel(nextFilter)}.`,
+      userId: currentHoster?.id ?? null,
+      userName: currentHoster?.name ?? null,
+    });
+  };
+
+  const handleSelectDateOption = (opt: DateFilterOption) => {
+    const [start, end] = rangeForOption(opt, filter.draftStartMillis, filter.draftEndMillis);
+    setDateValidationError(null);
+    const next: AdminFilterState =
+      opt === 'TODOS'
+        ? {
+            ...filter,
+            dateOption: opt,
+            appliedStartMillis: 0,
+            appliedEndMillis: Number.MAX_SAFE_INTEGER,
+          }
+        : {
+            ...filter,
+            dateOption: opt,
+            draftStartMillis: start,
+            draftEndMillis: end,
+            appliedStartMillis: start,
+            appliedEndMillis: end,
+          };
+    setFilter(next);
+    logFilterChange(next);
+  };
+
+  const handleApplyDraftFilters = () => {
+    const err = validateDateRange(filter.draftStartMillis, filter.draftEndMillis);
+    if (err) {
+      setDateValidationError(err);
+      return;
+    }
+    setDateValidationError(null);
+    const next: AdminFilterState = {
+      ...filter,
+      dateOption:
+        filter.dateOption === 'TODOS' ? 'INTERVALO_PERSONALIZADO' : filter.dateOption,
+      appliedStartMillis: startOfDay(filter.draftStartMillis),
+      appliedEndMillis: endOfDay(filter.draftEndMillis),
+    };
+    setFilter(next);
+    logFilterChange(next);
+  };
+
+  const handleClearFilters = () => {
+    const now = Date.now();
+    const start = startOfDay(now);
+    const end = endOfDay(now);
+    setDateValidationError(null);
+    const next: AdminFilterState = {
+      dateOption: 'TODOS',
+      draftStartMillis: start,
+      draftEndMillis: end,
+      appliedStartMillis: 0,
+      appliedEndMillis: Number.MAX_SAFE_INTEGER,
+      selectedHosterId: null,
+      selectedPeriod: null,
+      selectedOrigin: null,
+      selectedClassification: null,
+      preferentialOnly: false,
+    };
+    setFilter(next);
+    logFilterChange(next);
+  };
+
   const handleExport = async () => {
     setIsExporting(true);
     setExportSuccessData(null);
     setExportErrorMessage(null);
 
-    const periodLabel = getPeriodLabel(
-      dateOption,
-      specificDateMillis,
-      customStartMillis,
-      customEndMillis,
-      selectedPeriod
+    const [startMillis, endMillis] = rangeForOption(
+      filter.dateOption,
+      filter.appliedStartMillis,
+      filter.appliedEndMillis
     );
 
     const result = await exportReport({
       startMillis,
       endMillis,
-      selectedHosterId: null,
-      selectedShiftPeriod: selectedPeriod,
+      selectedHosterId: filter.selectedHosterId,
+      selectedShiftPeriod: filter.selectedPeriod,
+      selectedOrigin: filter.selectedOrigin,
+      selectedClassification: filter.selectedClassification,
+      preferentialOnly: filter.preferentialOnly,
+      actorUserId: currentHoster?.id ?? null,
+      actorUserName: currentHoster?.name ?? null,
     });
 
     setIsExporting(false);
@@ -259,7 +253,7 @@ export function AdminScreen() {
         fileName: result.fileName,
         rowCount: result.rowCount,
         totalClients: result.totalClients,
-        periodLabel,
+        periodLabel: activePeriodSummary,
       });
     } else if (result.status === 'BLOCKED') {
       setExportErrorMessage(result.reason);
@@ -277,7 +271,7 @@ export function AdminScreen() {
           padding: '0 20px 24px',
           display: 'flex',
           flexDirection: 'column',
-          gap: '16px',
+          gap: '14px',
         }}
       >
         {/* Header */}
@@ -295,11 +289,73 @@ export function AdminScreen() {
               Administração
             </div>
             <div style={{ fontSize: '12px', color: 'var(--pao-anthracite-muted)' }}>
-              Métricas operacionais e exportação de relatórios
+              Métricas operacionais, relatórios e auditoria
             </div>
           </div>
 
           <SyncStatusPill syncState={sync.syncState} pendingCount={sync.pendingCount} />
+        </div>
+
+        {/* Sub-tabs: Indicadores vs Logs do Sistema */}
+        <div
+          style={{
+            backgroundColor: '#FFFFFF',
+            border: '1px solid var(--pao-border)',
+            borderRadius: '12px',
+            padding: '4px',
+            display: 'flex',
+            gap: '6px',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('INDICADORES')}
+            data-testid="admin_tab_indicadores"
+            className="tap-feedback"
+            style={{
+              flex: 1,
+              height: '38px',
+              borderRadius: '9px',
+              border: 'none',
+              backgroundColor:
+                activeSubTab === 'INDICADORES' ? 'var(--pao-red)' : 'transparent',
+              color:
+                activeSubTab === 'INDICADORES' ? '#FFFFFF' : 'var(--pao-anthracite-muted)',
+              fontSize: '12px',
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+            }}
+          >
+            <Filter size={14} />
+            <span>Indicadores</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('LOGS')}
+            data-testid="admin_tab_logs"
+            className="tap-feedback"
+            style={{
+              flex: 1,
+              height: '38px',
+              borderRadius: '9px',
+              border: 'none',
+              backgroundColor: activeSubTab === 'LOGS' ? 'var(--pao-red)' : 'transparent',
+              color: activeSubTab === 'LOGS' ? '#FFFFFF' : 'var(--pao-anthracite-muted)',
+              fontSize: '12px',
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+            }}
+          >
+            <History size={14} />
+            <span>Logs do Sistema ({systemLogs.length})</span>
+          </button>
         </div>
 
         {/* Outdated / Cache Warning Banner */}
@@ -335,486 +391,721 @@ export function AdminScreen() {
           </button>
         )}
 
-        {/* Filter Bar Card */}
-        <div
-          style={{
-            backgroundColor: '#FFFFFF',
-            border: '1px solid var(--pao-border)',
-            borderRadius: '16px',
-            padding: '14px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Filter size={18} color="#9C1819" />
-            <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--pao-anthracite)' }}>
-              Período do Relatório e Filtros
-            </span>
-          </div>
+        {activeSubTab === 'LOGS' ? (
+          <div className="screen-transition" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <SystemLogsFilterCard
+              filter={logsFilter}
+              availableUsers={availableLogUsers}
+              availableActions={availableLogActions}
+              availableDevices={availableLogDevices}
+              onStartDateChange={(v) => setLogsFilter((p) => ({ ...p, startMillis: v }))}
+              onEndDateChange={(v) => setLogsFilter((p) => ({ ...p, endMillis: v }))}
+              onUserChange={(v) => setLogsFilter((p) => ({ ...p, selectedUser: v }))}
+              onActionChange={(v) => setLogsFilter((p) => ({ ...p, selectedAction: v }))}
+              onDeviceChange={(v) => setLogsFilter((p) => ({ ...p, selectedDevice: v }))}
+              onResultChange={(v: LogResult | null) =>
+                setLogsFilter((p) => ({ ...p, selectedResult: v }))
+              }
+              onClearFilters={() =>
+                setLogsFilter({
+                  startMillis: null,
+                  endMillis: null,
+                  selectedUser: null,
+                  selectedAction: null,
+                  selectedDevice: null,
+                  selectedResult: null,
+                })
+              }
+            />
 
-          {/* Date Preset Chips */}
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: '6px',
-              marginTop: '10px',
-            }}
-          >
-            {DATE_OPTIONS.map((opt) => {
-              const selected = dateOption === opt.id;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setDateOption(opt.id)}
-                  data-testid={`filter_date_${opt.id.toLowerCase()}`}
-                  className="tap-feedback"
-                  style={{
-                    border: 'none',
-                    borderRadius: '14px',
-                    padding: '6px 10px',
-                    backgroundColor: selected ? 'var(--pao-red)' : 'var(--pao-cream-light)',
-                    color: selected ? '#FFFFFF' : 'var(--pao-anthracite)',
-                    fontSize: '11px',
-                    fontWeight: selected ? 700 : 500,
-                  }}
-                >
-                  {opt.label}
-                </button>
-              );
-            })}
-          </div>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--pao-anthracite)' }}>
+              Registros de Auditoria ({filteredLogs.length})
+            </div>
 
-          {/* Specific Day Picker */}
-          {dateOption === 'DIA_ESPECIFICO' && (
-            <label
-              style={{
-                marginTop: '10px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '8px',
-                backgroundColor: 'var(--pao-cream-light)',
-                border: '1px solid var(--pao-border)',
-                borderRadius: '10px',
-                padding: '8px 12px',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Calendar size={16} color="#9C1819" />
-                <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--pao-anthracite)' }}>
-                  Dia selecionado:
-                </span>
-              </div>
-              <input
-                type="date"
-                value={toInputDateValue(specificDateMillis)}
-                onChange={(e) => {
-                  if (e.target.value) {
-                    setSpecificDateMillis(fromInputDateValue(e.target.value));
-                  }
-                }}
+            {filteredLogs.length === 0 ? (
+              <div
                 style={{
-                  border: '1px solid var(--pao-border)',
-                  borderRadius: '8px',
                   backgroundColor: '#FFFFFF',
-                  padding: '4px 8px',
+                  border: '1px solid var(--pao-border)',
+                  borderRadius: '14px',
+                  padding: '20px',
+                  textAlign: 'center',
                   fontSize: '12px',
-                  fontWeight: 700,
-                  color: 'var(--pao-anthracite)',
-                }}
-              />
-            </label>
-          )}
-
-          {/* Custom Range Start & End Pickers */}
-          {dateOption === 'INTERVALO_PERSONALIZADO' && (
-            <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-              <label
-                style={{
-                  flex: 1,
-                  backgroundColor: 'var(--pao-cream-light)',
-                  border: '1px solid var(--pao-border)',
-                  borderRadius: '10px',
-                  padding: '8px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '4px',
+                  color: 'var(--pao-anthracite-muted)',
                 }}
               >
-                <span style={{ fontSize: '10px', color: 'var(--pao-anthracite-muted)' }}>
-                  Data Início
-                </span>
-                <input
-                  type="date"
-                  value={toInputDateValue(customStartMillis)}
-                  onChange={(e) => {
-                    if (e.target.value) {
-                      setCustomStartMillis(fromInputDateValue(e.target.value));
-                    }
-                  }}
-                  style={{
-                    width: '100%',
-                    border: '1px solid var(--pao-border)',
-                    borderRadius: '6px',
-                    backgroundColor: '#FFFFFF',
-                    padding: '4px 6px',
-                    fontSize: '12px',
-                    fontWeight: 700,
-                    color: 'var(--pao-anthracite)',
-                  }}
-                />
-              </label>
-
-              <label
-                style={{
-                  flex: 1,
-                  backgroundColor: 'var(--pao-cream-light)',
-                  border: '1px solid var(--pao-border)',
-                  borderRadius: '10px',
-                  padding: '8px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '4px',
-                }}
-              >
-                <span style={{ fontSize: '10px', color: 'var(--pao-anthracite-muted)' }}>
-                  Data Fim
-                </span>
-                <input
-                  type="date"
-                  value={toInputDateValue(customEndMillis)}
-                  onChange={(e) => {
-                    if (e.target.value) {
-                      setCustomEndMillis(fromInputDateValue(e.target.value));
-                    }
-                  }}
-                  style={{
-                    width: '100%',
-                    border: '1px solid var(--pao-border)',
-                    borderRadius: '6px',
-                    backgroundColor: '#FFFFFF',
-                    padding: '4px 6px',
-                    fontSize: '12px',
-                    fontWeight: 700,
-                    color: 'var(--pao-anthracite)',
-                  }}
-                />
-              </label>
-            </div>
-          )}
-
-          {/* Shift & Preferential Filter Chips */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '12px' }}>
-            <PeriodChip
-              title="Todos Turnos"
-              isSelected={selectedPeriod === null}
-              onClick={() => setSelectedPeriod(null)}
-            />
-            <PeriodChip
-              title="Manhã"
-              isSelected={selectedPeriod === 'MANHA'}
-              onClick={() => setSelectedPeriod('MANHA')}
-            />
-            <PeriodChip
-              title="Noite"
-              isSelected={selectedPeriod === 'NOITE'}
-              onClick={() => setSelectedPeriod('NOITE')}
-            />
-            <PeriodChip
-              title="★ Preferencial"
-              isSelected={preferentialOnly}
-              onClick={() => setPreferentialOnly((p) => !p)}
-            />
-          </div>
-        </div>
-
-        {/* Key Metrics Title */}
-        <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--pao-anthracite)' }}>
-          Indicadores Principais
-        </div>
-
-        {/* 2x3 Metric Cards */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <AdminMetricCard
-              title="Pessoas Atendidas"
-              value={String(metrics.totalPeople)}
-              subtitle={`${metrics.totalAttendances} atendimentos`}
-            />
-            <AdminMetricCard
-              title="Clientes Novos"
-              value={String(metrics.totalNewClients)}
-              valueColor="#1E824C"
-              subtitle={`${
-                metrics.totalPeople > 0
-                  ? Math.floor((metrics.totalNewClients * 100) / metrics.totalPeople)
-                  : 0
-              }% do total`}
-            />
-          </div>
-
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <AdminMetricCard
-              title="Recorrentes"
-              value={String(metrics.totalReturningClients)}
-              subtitle="Clientes fiéis"
-            />
-            <AdminMetricCard
-              title="Preferencial (★)"
-              value={String(metrics.preferentialCount)}
-              valueColor="#D97706"
-              subtitle="Atendimentos prioritários"
-            />
-          </div>
-
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <AdminMetricCard
-              title="Clientes Manhã"
-              value={String(metrics.morningClients)}
-              subtitle="Turno Manhã"
-            />
-            <AdminMetricCard
-              title="Clientes Noite"
-              value={String(metrics.nightClients)}
-              subtitle="Turno Noite"
-            />
-          </div>
-        </div>
-
-        {/* Distribution of New Clients by Origin */}
-        <div
-          style={{
-            backgroundColor: '#FFFFFF',
-            border: '1px solid var(--pao-border)',
-            borderRadius: '16px',
-            padding: '16px',
-          }}
-        >
-          <div
-            style={{
-              fontSize: '14px',
-              fontWeight: 700,
-              color: 'var(--pao-anthracite)',
-              marginBottom: '12px',
-            }}
-          >
-            De Onde Conheceram (Clientes Novos)
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {ClientOrigins.map((origin) => {
-              const count = metrics.originDistribution[origin] ?? 0;
-              const pct = Math.floor((count * 100) / totalOriginNew);
-              return (
-                <div key={origin}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      fontSize: '12px',
-                    }}
-                  >
-                    <span style={{ color: 'var(--pao-anthracite)' }}>{origin}</span>
-                    <span style={{ fontWeight: 700, color: 'var(--pao-anthracite)' }}>
-                      {count} ({pct}%)
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      marginTop: '4px',
-                      width: '100%',
-                      height: '6px',
-                      borderRadius: '3px',
-                      backgroundColor: 'var(--pao-border-light)',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${Math.min(100, Math.max(0, pct))}%`,
-                        height: '100%',
-                        borderRadius: '3px',
-                        backgroundColor: count > 0 ? 'var(--pao-red)' : 'transparent',
-                        transition: 'width 0.25s ease',
-                      }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Hoster Performance */}
-        <div
-          style={{
-            backgroundColor: '#FFFFFF',
-            border: '1px solid var(--pao-border)',
-            borderRadius: '16px',
-            padding: '16px',
-          }}
-        >
-          <div
-            style={{
-              fontSize: '14px',
-              fontWeight: 700,
-              color: 'var(--pao-anthracite)',
-              marginBottom: '10px',
-            }}
-          >
-            Desempenho por Hoster
-          </div>
-
-          {Object.keys(metrics.hosterPerformance).length === 0 ? (
-            <div style={{ fontSize: '12px', color: 'var(--pao-anthracite-muted)' }}>
-              Nenhum atendimento registrado no período.
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {Object.entries(metrics.hosterPerformance).map(([name, totalPpl]) => (
-                <div
-                  key={name}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '4px 0',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <User size={16} color="#9C1819" />
-                    <span
-                      style={{
-                        fontSize: '13px',
-                        fontWeight: 500,
-                        color: 'var(--pao-anthracite)',
-                      }}
-                    >
-                      {name}
-                    </span>
-                  </div>
-                  <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--pao-anthracite)' }}>
-                    {totalPpl} pessoas
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Open Shifts Status */}
-        <div
-          style={{
-            backgroundColor: '#FFFFFF',
-            border: `1px solid ${openShifts.length > 0 ? '#D97706' : 'var(--pao-border)'}`,
-            borderRadius: '16px',
-            padding: '16px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--pao-anthracite)' }}>
-              Turnos em Aberto ({openShifts.length})
-            </span>
-            {openShifts.length > 0 && (
-              <span
-                style={{
-                  borderRadius: '4px',
-                  backgroundColor: 'rgba(217, 119, 6, 0.15)',
-                  padding: '2px 6px',
-                  fontSize: '10px',
-                  fontWeight: 700,
-                  color: '#D97706',
-                }}
-              >
-                Bloqueia Exportação
-              </span>
-            )}
-          </div>
-
-          <div style={{ marginTop: '10px' }}>
-            {openShifts.length === 0 ? (
-              <div style={{ fontSize: '12px', fontWeight: 500, color: '#1E824C' }}>
-                Todos os turnos estão devidamente encerrados. Exportação liberada.
+                Nenhum log encontrado para os filtros aplicados.
               </div>
             ) : (
-              <>
-                <div style={{ fontSize: '11px', color: 'var(--pao-anthracite-muted)' }}>
-                  Turnos abertos que precisam ser encerrados antes do fechamento:
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {filteredLogs.slice(0, 150).map((log) => (
+                  <SystemLogItemCard key={log.id} log={log} />
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="screen-transition" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* Prominent Período da Consulta Card */}
+            <div
+              data-testid="admin_period_filter_card"
+              style={{
+                backgroundColor: '#FFFFFF',
+                border: '1.5px solid rgba(156, 24, 25, 0.35)',
+                borderRadius: '18px',
+                padding: '16px',
+                boxShadow: '0 2px 10px rgba(156, 24, 25, 0.06)',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Calendar size={18} color="#9C1819" />
+                  <span
+                    style={{
+                      fontSize: '14px',
+                      fontWeight: 700,
+                      color: 'var(--pao-anthracite)',
+                    }}
+                  >
+                    Período da consulta
+                  </span>
                 </div>
-                <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  {openShifts.map((s) => (
-                    <div
-                      key={s.id}
+
+                <button
+                  type="button"
+                  onClick={handleClearFilters}
+                  data-testid="btn_limpar_filtros"
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    color: 'var(--pao-red)',
+                    padding: '4px 6px',
+                  }}
+                >
+                  Limpar
+                </button>
+              </div>
+
+              {/* Active period badge */}
+              <div
+                style={{
+                  marginTop: '8px',
+                  backgroundColor: 'var(--pao-cream-light)',
+                  borderRadius: '8px',
+                  padding: '6px 10px',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  color: 'var(--pao-red)',
+                }}
+              >
+                Consultando: {activePeriodSummary}
+              </div>
+
+              {/* Prominent Start & End Date Pickers */}
+              <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                <label
+                  style={{
+                    flex: 1,
+                    backgroundColor: 'var(--pao-cream-light)',
+                    border: '1px solid var(--pao-border)',
+                    borderRadius: '10px',
+                    padding: '8px 10px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px',
+                  }}
+                >
+                  <span style={{ fontSize: '10px', color: 'var(--pao-anthracite-muted)' }}>
+                    Data inicial
+                  </span>
+                  <input
+                    type="date"
+                    value={toInputDateValue(filter.draftStartMillis)}
+                    onChange={(e) => {
+                      if (!e.target.value) return;
+                      const cleanStart = startOfDay(fromInputDateValue(e.target.value));
+                      const err = validateDateRange(cleanStart, filter.draftEndMillis);
+                      setDateValidationError(err);
+                      setFilter((prev) => ({
+                        ...prev,
+                        dateOption: 'INTERVALO_PERSONALIZADO',
+                        draftStartMillis: cleanStart,
+                      }));
+                    }}
+                    data-testid="input_data_inicial"
+                    style={{
+                      width: '100%',
+                      border: '1px solid var(--pao-border)',
+                      borderRadius: '6px',
+                      backgroundColor: '#FFFFFF',
+                      padding: '4px 6px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      color: 'var(--pao-anthracite)',
+                    }}
+                  />
+                </label>
+
+                <label
+                  style={{
+                    flex: 1,
+                    backgroundColor: 'var(--pao-cream-light)',
+                    border: '1px solid var(--pao-border)',
+                    borderRadius: '10px',
+                    padding: '8px 10px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px',
+                  }}
+                >
+                  <span style={{ fontSize: '10px', color: 'var(--pao-anthracite-muted)' }}>
+                    Data final
+                  </span>
+                  <input
+                    type="date"
+                    value={toInputDateValue(filter.draftEndMillis)}
+                    onChange={(e) => {
+                      if (!e.target.value) return;
+                      const cleanEnd = endOfDay(fromInputDateValue(e.target.value));
+                      const err = validateDateRange(filter.draftStartMillis, cleanEnd);
+                      setDateValidationError(err);
+                      setFilter((prev) => ({
+                        ...prev,
+                        dateOption: 'INTERVALO_PERSONALIZADO',
+                        draftEndMillis: cleanEnd,
+                      }));
+                    }}
+                    data-testid="input_data_final"
+                    style={{
+                      width: '100%',
+                      border: '1px solid var(--pao-border)',
+                      borderRadius: '6px',
+                      backgroundColor: '#FFFFFF',
+                      padding: '4px 6px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      color: 'var(--pao-anthracite)',
+                    }}
+                  />
+                </label>
+              </div>
+
+              {dateValidationError && (
+                <div
+                  data-testid="date_validation_error"
+                  style={{
+                    marginTop: '8px',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    color: 'var(--status-red)',
+                  }}
+                >
+                  {dateValidationError}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleApplyDraftFilters}
+                data-testid="btn_aplicar_filtros"
+                className="tap-feedback"
+                style={{
+                  marginTop: '10px',
+                  width: '100%',
+                  height: '44px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  backgroundColor: 'var(--pao-red)',
+                  color: '#FFFFFF',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                }}
+              >
+                <Filter size={15} />
+                <span>Aplicar filtros</span>
+              </button>
+
+              {/* Atalhos rápidos */}
+              <div
+                style={{
+                  marginTop: '12px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  color: 'var(--pao-anthracite-muted)',
+                }}
+              >
+                Atalhos de período
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+                {DATE_OPTIONS.map((opt) => {
+                  const selected = filter.dateOption === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => handleSelectDateOption(opt.id)}
+                      data-testid={`filter_date_${opt.id.toLowerCase()}`}
+                      className="tap-feedback"
                       style={{
-                        backgroundColor: 'var(--pao-cream-light)',
-                        borderRadius: '8px',
-                        padding: '10px',
+                        border: 'none',
+                        borderRadius: '14px',
+                        padding: '6px 10px',
+                        backgroundColor: selected
+                          ? 'var(--pao-red)'
+                          : 'var(--pao-cream-light)',
+                        color: selected ? '#FFFFFF' : 'var(--pao-anthracite)',
+                        fontSize: '11px',
+                        fontWeight: selected ? 700 : 500,
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div
+                style={{
+                  height: '1px',
+                  backgroundColor: 'var(--pao-border-light)',
+                  margin: '12px 0 10px',
+                }}
+              />
+
+              {/* Turno & Preferencial */}
+              <div
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  color: 'var(--pao-anthracite-muted)',
+                  marginBottom: '6px',
+                }}
+              >
+                Turno e prioridade
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                <PeriodChip
+                  title="Todos Turnos"
+                  isSelected={filter.selectedPeriod === null}
+                  onClick={() => setFilter((p) => ({ ...p, selectedPeriod: null }))}
+                />
+                <PeriodChip
+                  title="Manhã"
+                  isSelected={filter.selectedPeriod === 'MANHA'}
+                  onClick={() => setFilter((p) => ({ ...p, selectedPeriod: 'MANHA' as ShiftPeriod }))}
+                />
+                <PeriodChip
+                  title="Noite"
+                  isSelected={filter.selectedPeriod === 'NOITE'}
+                  onClick={() => setFilter((p) => ({ ...p, selectedPeriod: 'NOITE' as ShiftPeriod }))}
+                />
+                <PeriodChip
+                  title="★ Preferencial"
+                  isSelected={filter.preferentialOnly}
+                  onClick={() => setFilter((p) => ({ ...p, preferentialOnly: !p.preferentialOnly }))}
+                />
+              </div>
+
+              {/* Classificação */}
+              <div
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  color: 'var(--pao-anthracite-muted)',
+                  marginTop: '10px',
+                  marginBottom: '6px',
+                }}
+              >
+                Classificação
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                <PeriodChip
+                  title="Todas"
+                  isSelected={filter.selectedClassification === null}
+                  onClick={() => setFilter((p) => ({ ...p, selectedClassification: null }))}
+                />
+                <PeriodChip
+                  title="Novos"
+                  isSelected={filter.selectedClassification === 'NOVO'}
+                  onClick={() => setFilter((p) => ({ ...p, selectedClassification: 'NOVO' }))}
+                />
+                <PeriodChip
+                  title="Recorrentes"
+                  isSelected={filter.selectedClassification === 'RECORRENTE'}
+                  onClick={() =>
+                    setFilter((p) => ({ ...p, selectedClassification: 'RECORRENTE' }))
+                  }
+                />
+              </div>
+
+              {/* Hoster */}
+              {availableNonAdminHosters.length > 0 && (
+                <>
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      color: 'var(--pao-anthracite-muted)',
+                      marginTop: '10px',
+                      marginBottom: '6px',
+                    }}
+                  >
+                    Hoster
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    <PeriodChip
+                      title="Todos"
+                      isSelected={filter.selectedHosterId === null}
+                      onClick={() => setFilter((p) => ({ ...p, selectedHosterId: null }))}
+                    />
+                    {availableNonAdminHosters.map((h) => (
+                      <PeriodChip
+                        key={h.id}
+                        title={h.name}
+                        isSelected={filter.selectedHosterId === h.id}
+                        onClick={() => setFilter((p) => ({ ...p, selectedHosterId: h.id }))}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Origem */}
+              <div
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  color: 'var(--pao-anthracite-muted)',
+                  marginTop: '10px',
+                  marginBottom: '6px',
+                }}
+              >
+                Origem (clientes novos)
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                <PeriodChip
+                  title="Todas"
+                  isSelected={filter.selectedOrigin === null}
+                  onClick={() => setFilter((p) => ({ ...p, selectedOrigin: null }))}
+                />
+                {ClientOrigins.map((orig) => (
+                  <PeriodChip
+                    key={orig}
+                    title={orig}
+                    isSelected={filter.selectedOrigin === orig}
+                    onClick={() => setFilter((p) => ({ ...p, selectedOrigin: orig }))}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Key Metrics Title */}
+            <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--pao-anthracite)' }}>
+              Indicadores Principais
+            </div>
+
+            {/* 2x3 Metric Cards */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <AdminMetricCard
+                  title="Pessoas Atendidas"
+                  value={String(metrics.totalPeople)}
+                  subtitle={`${metrics.totalAttendances} atendimentos`}
+                />
+                <AdminMetricCard
+                  title="Clientes Novos"
+                  value={String(metrics.totalNewClients)}
+                  valueColor="#1E824C"
+                  subtitle={`${
+                    metrics.totalPeople > 0
+                      ? Math.floor((metrics.totalNewClients * 100) / metrics.totalPeople)
+                      : 0
+                  }% do total`}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <AdminMetricCard
+                  title="Recorrentes"
+                  value={String(metrics.totalReturningClients)}
+                  subtitle="Clientes fiéis"
+                />
+                <AdminMetricCard
+                  title="Preferencial (★)"
+                  value={String(metrics.preferentialCount)}
+                  valueColor="#D97706"
+                  subtitle="Atendimentos prioritários"
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <AdminMetricCard
+                  title="Clientes Manhã"
+                  value={String(metrics.morningClients)}
+                  subtitle="Turno Manhã"
+                />
+                <AdminMetricCard
+                  title="Clientes Noite"
+                  value={String(metrics.nightClients)}
+                  subtitle="Turno Noite"
+                />
+              </div>
+            </div>
+
+            {/* Distribution of New Clients by Origin */}
+            <div
+              style={{
+                backgroundColor: '#FFFFFF',
+                border: '1px solid var(--pao-border)',
+                borderRadius: '16px',
+                padding: '16px',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: '14px',
+                  fontWeight: 700,
+                  color: 'var(--pao-anthracite)',
+                  marginBottom: '12px',
+                }}
+              >
+                De Onde Conheceram (Clientes Novos)
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {ClientOrigins.map((origin) => {
+                  const count = metrics.originDistribution[origin] ?? 0;
+                  const pct = Math.floor((count * 100) / totalOriginNew);
+                  return (
+                    <div key={origin}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          fontSize: '12px',
+                        }}
+                      >
+                        <span style={{ color: 'var(--pao-anthracite)' }}>{origin}</span>
+                        <span style={{ fontWeight: 700, color: 'var(--pao-anthracite)' }}>
+                          {count} ({pct}%)
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          marginTop: '4px',
+                          width: '100%',
+                          height: '6px',
+                          borderRadius: '3px',
+                          backgroundColor: 'var(--pao-border-light)',
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${Math.min(100, Math.max(0, pct))}%`,
+                            height: '100%',
+                            borderRadius: '3px',
+                            backgroundColor: count > 0 ? 'var(--pao-red)' : 'transparent',
+                            transition: 'width 0.25s ease',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Hoster Performance */}
+            <div
+              style={{
+                backgroundColor: '#FFFFFF',
+                border: '1px solid var(--pao-border)',
+                borderRadius: '16px',
+                padding: '16px',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: '14px',
+                  fontWeight: 700,
+                  color: 'var(--pao-anthracite)',
+                  marginBottom: '10px',
+                }}
+              >
+                Desempenho por Hoster
+              </div>
+
+              {Object.keys(metrics.hosterPerformance).length === 0 ? (
+                <div style={{ fontSize: '12px', color: 'var(--pao-anthracite-muted)' }}>
+                  Nenhum atendimento registrado no período.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {Object.entries(metrics.hosterPerformance).map(([name, totalPpl]) => (
+                    <div
+                      key={name}
+                      style={{
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
+                        padding: '4px 0',
                       }}
                     >
-                      <div>
-                        <div
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <User size={16} color="#9C1819" />
+                        <span
                           style={{
-                            fontSize: '12px',
-                            fontWeight: 700,
+                            fontSize: '13px',
+                            fontWeight: 500,
                             color: 'var(--pao-anthracite)',
                           }}
                         >
-                          {s.hosterName}
-                        </div>
-                        <div style={{ fontSize: '11px', color: 'var(--pao-anthracite-muted)' }}>
-                          Turno {ShiftPeriodDisplay[s.period]} • Aberto {formatTime(s.openedAt)}
-                        </div>
+                          {name}
+                        </span>
                       </div>
-                      <span style={{ fontSize: '11px', fontWeight: 700, color: '#D97706' }}>
-                        Aberto
+                      <span
+                        style={{
+                          fontSize: '13px',
+                          fontWeight: 700,
+                          color: 'var(--pao-anthracite)',
+                        }}
+                      >
+                        {totalPpl} pessoas
                       </span>
                     </div>
                   ))}
                 </div>
-              </>
-            )}
-          </div>
-        </div>
+              )}
+            </div>
 
-        {/* Export Section */}
-        <div
-          style={{
-            backgroundColor: 'var(--pao-cream-light)',
-            border: '1px solid var(--pao-border)',
-            borderRadius: '16px',
-            padding: '16px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Download size={20} color="#9C1819" />
-            <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--pao-anthracite)' }}>
-              Gerar Planilha Gerencial (.xlsx)
-            </span>
-          </div>
-          <div
-            style={{
-              marginTop: '6px',
-              marginBottom: '14px',
-              fontSize: '12px',
-              color: 'var(--pao-anthracite-muted)',
-              lineHeight: 1.45,
-            }}
-          >
-            Gera uma planilha Excel com 3 abas completas (Atendimentos, Clientes Detalhado e
-            Resumo Diário & Origens com separação por dia e consolidação geral).
-          </div>
+            {/* Open Shifts Status */}
+            <div
+              style={{
+                backgroundColor: '#FFFFFF',
+                border: `1px solid ${openShifts.length > 0 ? '#D97706' : 'var(--pao-border)'}`,
+                borderRadius: '16px',
+                padding: '16px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--pao-anthracite)' }}>
+                  Turnos em Aberto ({openShifts.length})
+                </span>
+                {openShifts.length > 0 && (
+                  <span
+                    style={{
+                      borderRadius: '4px',
+                      backgroundColor: 'rgba(217, 119, 6, 0.15)',
+                      padding: '2px 6px',
+                      fontSize: '10px',
+                      fontWeight: 700,
+                      color: '#D97706',
+                    }}
+                  >
+                    Bloqueia Exportação
+                  </span>
+                )}
+              </div>
 
-          <PaoPrimaryButton
-            text="Gerar Relatório XLSX"
-            onClick={handleExport}
-            isLoading={isExporting}
-            testId="btn_exportar_excel"
-          />
-        </div>
+              <div style={{ marginTop: '10px' }}>
+                {openShifts.length === 0 ? (
+                  <div style={{ fontSize: '12px', fontWeight: 500, color: '#1E824C' }}>
+                    Todos os turnos estão devidamente encerrados. Exportação liberada.
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: '11px', color: 'var(--pao-anthracite-muted)' }}>
+                      Turnos abertos que precisam ser encerrados antes do fechamento:
+                    </div>
+                    <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {openShifts.map((s) => (
+                        <div
+                          key={s.id}
+                          style={{
+                            backgroundColor: 'var(--pao-cream-light)',
+                            borderRadius: '8px',
+                            padding: '10px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                          }}
+                        >
+                          <div>
+                            <div
+                              style={{
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                color: 'var(--pao-anthracite)',
+                              }}
+                            >
+                              {s.hosterName}
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--pao-anthracite-muted)' }}>
+                              Turno {ShiftPeriodDisplay[s.period]} • Aberto {formatTime(s.openedAt)}
+                            </div>
+                          </div>
+                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#D97706' }}>
+                            Aberto
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Export Section */}
+            <div
+              style={{
+                backgroundColor: 'var(--pao-cream-light)',
+                border: '1px solid var(--pao-border)',
+                borderRadius: '16px',
+                padding: '16px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Download size={20} color="#9C1819" />
+                <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--pao-anthracite)' }}>
+                  Gerar Planilha Gerencial (.xlsx)
+                </span>
+              </div>
+              <div
+                style={{
+                  marginTop: '6px',
+                  marginBottom: '14px',
+                  fontSize: '12px',
+                  color: 'var(--pao-anthracite-muted)',
+                  lineHeight: 1.45,
+                }}
+              >
+                Gera uma planilha Excel com 3 abas completas (Atendimentos, Clientes Detalhado e
+                Resumo Diário & Origens com separação por dia e consolidação geral).
+              </div>
+
+              <PaoPrimaryButton
+                text="Gerar Relatório XLSX"
+                onClick={handleExport}
+                isLoading={isExporting}
+                testId="btn_exportar_excel"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Export Success Confirmation & Share Popup */}

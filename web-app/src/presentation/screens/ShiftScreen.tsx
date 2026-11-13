@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Info, Lock, LogOut, User } from 'lucide-react';
+import { Info, Lock, LogOut, MonitorSmartphone, Pencil, User } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { deviceIdentity } from '../../data/local/deviceIdentity';
 import { authRepository } from '../../data/repositories/authRepository';
 import { receptionRepository } from '../../data/repositories/receptionRepository';
 import { ShiftPeriodDisplay } from '../../domain/models';
@@ -8,9 +9,23 @@ import { formatDate, formatTime } from '../../domain/utils/dateTime';
 import { SyncStatusPill } from '../components/CommonComponents';
 import { CloseShiftModal } from '../modals/CloseShiftModal';
 
-export function ShiftScreen() {
-  const { currentHoster, currentShift, shiftAttendances, sync, showSnackbar } = useApp();
+export function ShiftScreen({
+  onShiftClosed,
+}: {
+  onShiftClosed?: () => void;
+} = {}) {
+  const {
+    currentHoster,
+    currentShift,
+    shiftAttendances,
+    sync,
+    deviceName,
+    setDeviceDisplayName,
+    showSnackbar,
+  } = useApp();
   const [showCloseShift, setShowCloseShift] = useState(false);
+  const [showEditDevice, setShowEditDevice] = useState(false);
+  const [draftDeviceName, setDraftDeviceName] = useState('');
 
   const totalAtt = shiftAttendances.length;
   const totalPeople = shiftAttendances.reduce((s, a) => s + a.attendance.totalMembers, 0);
@@ -93,6 +108,65 @@ export function ShiftScreen() {
               Hoster em atividade neste dispositivo
             </div>
           </div>
+        </div>
+
+        <div style={{ height: '10px' }} />
+
+        {/* Device Identity Card */}
+        <div
+          style={{
+            backgroundColor: '#FFFFFF',
+            border: '1px solid var(--pao-border-light)',
+            borderRadius: '14px',
+            padding: '10px 14px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '10px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
+            <MonitorSmartphone size={20} color="#9C1819" style={{ flexShrink: 0 }} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: '11px', color: 'var(--pao-anthracite-muted)' }}>
+                Dispositivo identificado nos logs
+              </div>
+              <div
+                style={{
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  color: 'var(--pao-anthracite)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {deviceName}
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setDraftDeviceName(deviceIdentity.getFriendlyName() || '');
+              setShowEditDevice(true);
+            }}
+            aria-label="Editar nome do dispositivo"
+            data-testid="btn_edit_device_name"
+            className="tap-feedback"
+            style={{
+              width: '36px',
+              height: '36px',
+              border: 'none',
+              background: 'transparent',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <Pencil size={17} color="#9C1819" />
+          </button>
         </div>
 
         <div style={{ height: '14px' }} />
@@ -246,13 +320,82 @@ export function ShiftScreen() {
             setShowCloseShift(false);
             const res = await receptionRepository.closeShift(currentShift.id);
             if (res.ok) {
-              showSnackbar('Turno encerrado com sucesso! Bom descanso.');
-              authRepository.logout();
+              showSnackbar(
+                'Turno encerrado com sucesso! Confira os resultados na tela de Administração.'
+              );
+              onShiftClosed?.();
             } else {
               showSnackbar(res.error);
             }
           }}
         />
+      )}
+
+      {showEditDevice && (
+        <div className="dialog-modal-backdrop" onClick={() => setShowEditDevice(false)}>
+          <div className="dialog-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: '17px', fontWeight: 700, color: 'var(--pao-anthracite)' }}>
+              Nome do Dispositivo
+            </div>
+            <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--pao-anthracite-muted)' }}>
+              Defina um apelido para identificar este aparelho nos logs do sistema (ex.: Recepção 1,
+              iPad Entrada).
+            </div>
+
+            <div className="outlined-field-wrap" style={{ marginTop: '14px' }}>
+              <span className="outlined-field-label">Apelido do dispositivo</span>
+              <input
+                type="text"
+                value={draftDeviceName}
+                onChange={(e) => setDraftDeviceName(e.target.value)}
+                placeholder="Ex.: Recepção Balcão"
+                className="outlined-field-input"
+                style={{ height: '48px', fontSize: '14px' }}
+              />
+            </div>
+
+            <div
+              style={{
+                marginTop: '16px',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setShowEditDevice(false)}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: 'var(--pao-anthracite-muted)',
+                  padding: '8px 12px',
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDeviceDisplayName(draftDeviceName);
+                  setShowEditDevice(false);
+                }}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  color: 'var(--pao-red)',
+                  padding: '8px 12px',
+                }}
+              >
+                Salvar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 import { localDb } from '../local/database';
 import { ADMIN_VALID_HASH, ADMIN_VALID_SALT, syncManager } from '../sync/syncManager';
-import type { Hoster } from '../../domain/models';
+import { systemLogRepository } from './systemLogRepository';
+import { SystemLogActions, type Hoster } from '../../domain/models';
 import { generateSalt, hashPassword, verifyPassword } from '../../domain/utils/security';
 
 const SESSION_KEY_ID = 'pao_current_hoster_id';
@@ -214,6 +215,15 @@ class AuthRepository {
     });
 
     this.setSession(updated);
+    systemLogRepository.logAsync({
+      action: SystemLogActions.FIRST_ACCESS_ACTIVATION,
+      entityType: 'HOSTER',
+      entityId: updated.id,
+      userId: updated.id,
+      userName: updated.name,
+      result: 'SUCCESS',
+      description: `Primeiro acesso ativado por ${updated.name}.`,
+    });
     void syncManager.triggerSync();
     return { ok: true, value: updated };
   }
@@ -242,12 +252,38 @@ class AuthRepository {
         };
         await localDb.insertOrUpdateHoster(adminHoster);
         this.setSession(adminHoster);
+        systemLogRepository.logAsync({
+          action: SystemLogActions.LOGIN_SUCCESS,
+          entityType: 'HOSTER',
+          entityId: adminHoster.id,
+          userId: adminHoster.id,
+          userName: adminHoster.name,
+          result: 'SUCCESS',
+          description: 'Login realizado como Administrador.',
+        });
         return { ok: true, value: adminHoster };
       }
+
+      systemLogRepository.logAsync({
+        action: SystemLogActions.LOGIN_FAILURE,
+        entityType: 'HOSTER',
+        entityId: hosterId,
+        userId: hosterId,
+        userName: entity?.name ?? 'Administrador',
+        result: 'FAILURE',
+        description: 'Tentativa de login com senha incorreta para Administrador.',
+      });
       return { ok: false, error: 'Senha incorreta.' };
     }
 
     if (!entity) {
+      systemLogRepository.logAsync({
+        action: SystemLogActions.LOGIN_FAILURE,
+        entityType: 'HOSTER',
+        entityId: hosterId,
+        result: 'FAILURE',
+        description: 'Tentativa de login com hoster inexistente.',
+      });
       return { ok: false, error: 'Hoster não encontrado.' };
     }
     if (!entity.isActivated) {
@@ -256,14 +292,44 @@ class AuthRepository {
 
     const valid = verifyPassword(pin, entity.pinSalt, entity.pinHash);
     if (!valid) {
+      systemLogRepository.logAsync({
+        action: SystemLogActions.LOGIN_FAILURE,
+        entityType: 'HOSTER',
+        entityId: entity.id,
+        userId: entity.id,
+        userName: entity.name,
+        result: 'FAILURE',
+        description: `Senha incorreta informada para ${entity.name}.`,
+      });
       return { ok: false, error: 'Senha incorreta.' };
     }
 
     this.setSession(entity);
+    systemLogRepository.logAsync({
+      action: SystemLogActions.LOGIN_SUCCESS,
+      entityType: 'HOSTER',
+      entityId: entity.id,
+      userId: entity.id,
+      userName: entity.name,
+      result: 'SUCCESS',
+      description: `Login realizado por ${entity.name}.`,
+    });
     return { ok: true, value: entity };
   }
 
   logout(): void {
+    const prev = this.currentHosterValue;
+    if (prev) {
+      systemLogRepository.logAsync({
+        action: SystemLogActions.LOGOUT,
+        entityType: 'HOSTER',
+        entityId: prev.id,
+        userId: prev.id,
+        userName: prev.name,
+        result: 'SUCCESS',
+        description: `Logout realizado por ${prev.name}.`,
+      });
+    }
     this.setSession(null);
   }
 }

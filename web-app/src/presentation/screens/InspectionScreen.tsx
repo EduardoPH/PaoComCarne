@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Info, Pencil } from 'lucide-react';
+import { Info, Pencil, Trash2 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { receptionRepository } from '../../data/repositories/receptionRepository';
 import {
@@ -10,10 +10,12 @@ import {
 import { formatTime } from '../../domain/utils/dateTime';
 import { SyncStatusPill } from '../components/CommonComponents';
 import { CorrectionModal } from '../modals/CorrectionModal';
+import { DeleteAttendanceModal } from '../modals/DeleteAttendanceModal';
 
 export function InspectionScreen() {
   const { currentHoster, currentShift, shiftAttendances, sync, showSnackbar } = useApp();
   const [showCorrection, setShowCorrection] = useState(false);
+  const [attendanceToDelete, setAttendanceToDelete] = useState<AttendanceWithMembers | null>(null);
 
   const totalAtt = shiftAttendances.length;
   const totalPeople = shiftAttendances.reduce((s, a) => s + a.attendance.totalMembers, 0);
@@ -174,7 +176,13 @@ export function InspectionScreen() {
                   item={item}
                   index={idx + 1}
                   isLast={idx === shiftAttendances.length - 1}
+                  canDelete={
+                    Boolean(currentHoster?.isAdmin) ||
+                    (currentShift.status === 'OPEN' &&
+                      item.attendance.hosterId === currentHoster?.id)
+                  }
                   onCorrect={() => setShowCorrection(true)}
+                  onDelete={() => setAttendanceToDelete(item)}
                 />
               ))}
             </div>
@@ -210,6 +218,27 @@ export function InspectionScreen() {
             });
             showSnackbar(
               res.ok ? 'Atendimento corrigido com sucesso! Auditoria registrada.' : res.error
+            );
+          }}
+        />
+      )}
+
+      {attendanceToDelete && currentHoster && (
+        <DeleteAttendanceModal
+          item={attendanceToDelete}
+          onDismiss={() => setAttendanceToDelete(null)}
+          onConfirmDelete={async (reason) => {
+            const targetId = attendanceToDelete.attendance.id;
+            setAttendanceToDelete(null);
+            const res = await receptionRepository.softDeleteAttendance({
+              attendanceId: targetId,
+              actorHosterId: currentHoster.id,
+              actorHosterName: currentHoster.name,
+              actorIsAdmin: currentHoster.isAdmin,
+              deletionReason: reason,
+            });
+            showSnackbar(
+              res.ok ? 'Atendimento excluído e métricas atualizadas.' : res.error
             );
           }}
         />
@@ -250,12 +279,16 @@ function InspectionAttendanceCard({
   item,
   index,
   isLast,
+  canDelete,
   onCorrect,
+  onDelete,
 }: {
   item: AttendanceWithMembers;
   index: number;
   isLast: boolean;
+  canDelete: boolean;
   onCorrect: () => void;
+  onDelete: () => void;
 }) {
   const att = item.attendance;
   const newMembers = item.members.filter((m) => m.classification === 'NOVO');
@@ -351,30 +384,64 @@ function InspectionAttendanceCard({
         </div>
       )}
 
-      {isLast && (
-        <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'flex-end' }}>
-          <button
-            type="button"
-            onClick={onCorrect}
-            data-testid="inspection_btn_corrigir_ultimo"
-            className="tap-feedback"
-            style={{
-              height: '32px',
-              padding: '0 10px',
-              borderRadius: '6px',
-              border: '1px solid #D97706',
-              backgroundColor: 'transparent',
-              color: '#D97706',
-              fontSize: '11px',
-              fontWeight: 700,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '4px',
-            }}
-          >
-            <Pencil size={12} color="#D97706" />
-            <span>Corrigir este último</span>
-          </button>
+      {(isLast || canDelete) && (
+        <div
+          style={{
+            marginTop: '8px',
+            display: 'flex',
+            justifyContent: 'flex-end',
+            gap: '8px',
+            flexWrap: 'wrap',
+          }}
+        >
+          {canDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              data-testid={`inspection_btn_excluir_${att.id}`}
+              className="tap-feedback"
+              style={{
+                height: '32px',
+                padding: '0 10px',
+                borderRadius: '6px',
+                border: '1px solid var(--status-red)',
+                backgroundColor: 'transparent',
+                color: 'var(--status-red)',
+                fontSize: '11px',
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}
+            >
+              <Trash2 size={12} color="#9C1819" />
+              <span>Excluir</span>
+            </button>
+          )}
+          {isLast && (
+            <button
+              type="button"
+              onClick={onCorrect}
+              data-testid="inspection_btn_corrigir_ultimo"
+              className="tap-feedback"
+              style={{
+                height: '32px',
+                padding: '0 10px',
+                borderRadius: '6px',
+                border: '1px solid #D97706',
+                backgroundColor: 'transparent',
+                color: '#D97706',
+                fontSize: '11px',
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}
+            >
+              <Pencil size={12} color="#D97706" />
+              <span>Corrigir este último</span>
+            </button>
+          )}
         </div>
       )}
     </div>

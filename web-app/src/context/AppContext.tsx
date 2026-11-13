@@ -1,8 +1,10 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { localDb } from '../data/local/database';
+import { deviceIdentity } from '../data/local/deviceIdentity';
 import { authRepository } from '../data/repositories/authRepository';
 import { receptionRepository } from '../data/repositories/receptionRepository';
 import { syncManager, type SyncSnapshot } from '../data/sync/syncManager';
+import { updateService, type UpdateUiState } from '../data/update/updateService';
 import type {
   Attendance,
   AttendanceMember,
@@ -10,6 +12,7 @@ import type {
   Hoster,
   QueueEvent,
   Shift,
+  SystemLog,
 } from '../domain/models';
 
 interface AppContextValue {
@@ -22,7 +25,14 @@ interface AppContextValue {
   allShifts: Shift[];
   allAttendances: Attendance[];
   allMembers: AttendanceMember[];
+  systemLogs: SystemLog[];
   sync: SyncSnapshot;
+  updateState: UpdateUiState;
+  deviceName: string;
+  setDeviceDisplayName: (name: string) => void;
+  recheckVersion: () => Promise<void>;
+  applyWebUpdate: () => Promise<void>;
+  dismissOptionalUpdateBanner: () => void;
   showSyncLogsModal: boolean;
   setShowSyncLogsModal: (show: boolean) => void;
   snackbarMessage: string | null;
@@ -45,7 +55,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [allShifts, setAllShifts] = useState<Shift[]>([]);
   const [allAttendances, setAllAttendances] = useState<Attendance[]>([]);
   const [allMembers, setAllMembers] = useState<AttendanceMember[]>([]);
+  const [systemLogs, setSystemLogs] = useState<SystemLog[]>([]);
   const [sync, setSync] = useState<SyncSnapshot>(() => syncManager.getSnapshot());
+  const [updateState, setUpdateState] = useState<UpdateUiState>(() => updateService.getState());
+  const [deviceName, setDeviceName] = useState<string>(() =>
+    deviceIdentity.getDeviceDisplayName()
+  );
   const [showSyncLogsModal, setShowSyncLogsModal] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null);
 
@@ -57,25 +72,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSnackbarMessage(null);
   }, []);
 
+  const setDeviceDisplayName = useCallback((name: string) => {
+    deviceIdentity.setFriendlyName(name);
+    setDeviceName(deviceIdentity.getDeviceDisplayName());
+  }, []);
+
+  const recheckVersion = useCallback(async () => {
+    const online = typeof navigator !== 'undefined' ? navigator.onLine : syncManager.getSnapshot().isOnline;
+    const h = authRepository.getCurrentHoster();
+    await updateService.checkVersion(online, h?.id ?? null, h?.name ?? null);
+  }, []);
+
+  const applyWebUpdate = useCallback(async () => {
+    const h = authRepository.getCurrentHoster();
+    await updateService.applyWebUpdate(h?.id ?? null, h?.name ?? null);
+  }, []);
+
+  const dismissOptionalUpdateBanner = useCallback(() => {
+    updateService.dismissOptionalBanner();
+  }, []);
+
   useEffect(() => {
     if (!snackbarMessage) return;
-    const t = setTimeout(() => setSnackbarMessage(null), 3500);
+    const t = setTimeout(() => setSnackbarMessage(null), 5000);
     return () => clearTimeout(t);
   }, [snackbarMessage]);
 
   const reloadLocalState = useCallback(async () => {
     const activeHoster = authRepository.getCurrentHoster();
-    const [activeHosters, shifts, atts, members] = await Promise.all([
+    const [activeHosters, shifts, atts, members, logs] = await Promise.all([
       authRepository.getActiveHosters(),
       receptionRepository.getAllShifts(),
       receptionRepository.getAllAttendances(),
       receptionRepository.getAllMembers(),
+      receptionRepository.getAllSystemLogs(),
     ]);
 
     setHosters(activeHosters);
     setAllShifts(shifts);
     setAllAttendances(atts);
     setAllMembers(members);
+    setSystemLogs(logs);
 
     if (activeHoster && !activeHoster.isAdmin) {
       const shift = await receptionRepository.getActiveShift(activeHoster.id);
@@ -102,6 +139,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     let unsubDb: (() => void) | undefined;
     let unsubSync: (() => void) | undefined;
     let unsubAuth: (() => void) | undefined;
+    let unsubUpdate: (() => void) | undefined;
 
     (async () => {
       await syncManager.init();
@@ -113,6 +151,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setSync(syncManager.getSnapshot());
     });
 
+    unsubUpdate = updateService.subscribe(() => {
+      setUpdateState(updateService.getState());
+    });
+
     unsubDb = localDb.subscribe(() => {
       void reloadLocalState();
     });
@@ -122,10 +164,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       void reloadLocalState();
     });
 
+    const handleVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        const online = typeof navigator !== 'undefined' ? navigator.onLine : false;
+        const h = authRepository.getCurrentHoster();
+        void updateService.checkVersion(online, h?.id ?? null, h?.name ?? null);
+        if (online) {
+          void syncManager.fetchAllRemoteData();
+        }
+      }
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibility);
+    }
+
     return () => {
       unsubDb?.();
       unsubSync?.();
+      unsubUpdate?.();
       unsubAuth?.();
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibility);
+      }
     };
   }, [reloadLocalState]);
 
@@ -141,7 +202,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         allShifts,
         allAttendances,
         allMembers,
+        systemLogs,
         sync,
+        updateState,
+        deviceName,
+        setDeviceDisplayName,
+        recheckVersion,
+        applyWebUpdate,
+        dismissOptionalUpdateBanner,
         showSyncLogsModal,
         setShowSyncLogsModal,
         snackbarMessage,

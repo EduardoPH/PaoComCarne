@@ -111,12 +111,16 @@ button:disabled {
 
 /* Material-like tap active feedback */
 .tap-feedback {
-  transition: transform 0.08s ease, opacity 0.12s ease, background-color 0.12s ease;
+  transition: transform 0.08s ease, opacity 0.12s ease, background-color 0.15s ease;
 }
 
 .tap-feedback:active:not(:disabled) {
   transform: scale(0.985);
   opacity: 0.92;
+}
+
+.screen-transition {
+  animation: screenSlideFade 0.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Floating label outlined input style matching Compose OutlinedTextField */
@@ -187,6 +191,7 @@ button:disabled {
   display: flex;
   justify-content: center;
   background-color: rgba(38, 29, 28, 0.35);
+  animation: fadeIn 0.16s ease-out;
 }
 
 .fullscreen-modal-sheet {
@@ -199,6 +204,7 @@ button:disabled {
   padding-top: var(--safe-top);
   padding-bottom: var(--safe-bottom);
   overflow: hidden;
+  animation: slideUpIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .dialog-modal-backdrop {
@@ -210,7 +216,7 @@ button:disabled {
   justify-content: center;
   padding: 20px;
   background-color: rgba(38, 29, 28, 0.48);
-  animation: fadeIn 0.14s ease-out;
+  animation: fadeIn 0.15s ease-out;
 }
 
 .dialog-modal-card {
@@ -222,7 +228,7 @@ button:disabled {
   border-radius: 20px;
   padding: 22px;
   box-shadow: 0 20px 44px rgba(38, 29, 28, 0.25);
-  animation: scaleIn 0.15s ease-out;
+  animation: scaleIn 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @keyframes fadeIn {
@@ -235,10 +241,36 @@ button:disabled {
   to { opacity: 1; transform: scale(1); }
 }
 
+@keyframes slideUpIn {
+  from { opacity: 0.7; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes screenSlideFade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
 
 .spin {
   animation: spin 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen-transition,
+  .fullscreen-modal-backdrop,
+  .fullscreen-modal-sheet,
+  .dialog-modal-backdrop,
+  .dialog-modal-card {
+    animation: none !important;
+  }
+
+  .tap-feedback,
+  .tap-feedback:active:not(:disabled) {
+    transition: none !important;
+    transform: none !important;
+  }
 }
