@@ -39,7 +39,7 @@ class PaoComCarneApp : Application() {
         appUpdateManager = AppUpdateManager(this, database, systemLogRepository)
 
         systemLogRepository.setOnEnqueueCallback {
-            syncManager.triggerSync()
+            syncManager.flushPendingQueueNow()
         }
 
         authRepository = AuthRepository(this, database, syncManager, systemLogRepository)

@@ -221,4 +221,13 @@ class EvolutionFeaturesTest {
         assertEquals(1, AppDatabase.MIGRATION_1_2.startVersion)
         assertEquals(2, AppDatabase.MIGRATION_1_2.endVersion)
     }
+
+    @Test
+    fun testIsoUtcMillisecondRoundTrip() {
+        val original = 1_762_987_654_321L
+        val iso = com.example.domain.util.DateTimeUtils.toIsoUtc(original)
+        assertTrue(iso.endsWith(".321Z"))
+        val parsed = com.example.domain.util.DateTimeUtils.fromIsoUtc(iso)
+        assertEquals(original, parsed)
+    }
 }

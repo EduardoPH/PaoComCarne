@@ -283,7 +283,7 @@ export const supabaseClient = {
     return request<void>(
       'rest/v1/attendance_audit',
       { method: 'POST', body: JSON.stringify(dto) },
-      { Prefer: 'return=minimal' }
+      { Prefer: 'return=minimal, resolution=ignore-duplicates' }
     );
   },
 
@@ -297,7 +297,7 @@ export const supabaseClient = {
     return request<void>(
       'rest/v1/queue_events',
       { method: 'POST', body: JSON.stringify(dto) },
-      { Prefer: 'return=minimal' }
+      { Prefer: 'return=minimal, resolution=ignore-duplicates' }
     );
   },
 
@@ -312,7 +312,7 @@ export const supabaseClient = {
     return request<void>(
       'rest/v1/system_logs',
       { method: 'POST', body: JSON.stringify(dto) },
-      { Prefer: 'return=minimal, resolution=merge-duplicates' }
+      { Prefer: 'return=minimal, resolution=ignore-duplicates' }
     );
   },
 

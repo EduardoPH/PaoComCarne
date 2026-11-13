@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { BarChart3, Clock, Eye, Store } from 'lucide-react';
-import { useApp } from './context/AppContext';
+import { useApp, WEB_MAINTENANCE_MODE } from './context/AppContext';
 import { authRepository } from './data/repositories/authRepository';
 import { updateService } from './data/update/updateService';
 import { BrandLogoBox } from './presentation/components/CommonComponents';
@@ -11,6 +11,7 @@ import { AdminScreen } from './presentation/screens/AdminScreen';
 import { HostersManagementScreen } from './presentation/screens/HostersManagementScreen';
 import { InspectionScreen } from './presentation/screens/InspectionScreen';
 import { LoginScreen } from './presentation/screens/LoginScreen';
+import { MaintenanceScreen } from './presentation/screens/MaintenanceScreen';
 import { MandatoryUpdateScreen } from './presentation/screens/MandatoryUpdateScreen';
 import { ReceptionScreen } from './presentation/screens/ReceptionScreen';
 import { ShiftScreen } from './presentation/screens/ShiftScreen';
@@ -43,6 +44,16 @@ export default function App() {
     snackbarMessage,
   } = useApp();
   const [selectedTab, setSelectedTab] = useState<AppTab>('RECEPCAO');
+
+  if (WEB_MAINTENANCE_MODE) {
+    return (
+      <div className="app-viewport-shell">
+        <div className="app-device-frame">
+          <MaintenanceScreen />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-viewport-shell">

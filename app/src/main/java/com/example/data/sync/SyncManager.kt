@@ -68,7 +68,13 @@ class SyncManager(private val context: Context) {
 
     var isOnline = false
         private set
+    private val syncLock = Any()
+    @Volatile
     private var isSyncInProgress = false
+    @Volatile
+    private var resyncRequested = false
+    @Volatile
+    private var pullAfterSyncRequested = false
 
     @Volatile
     private var systemLogRepository: SystemLogRepository? = null
@@ -90,13 +96,15 @@ class SyncManager(private val context: Context) {
                     "queue_events" -> fetchQueueEventsFromRemote()
                     "system_logs" -> fetchSystemLogsFromRemote()
                 }
-                systemLogRepository?.recordLog(
-                    action = SystemLogActions.REMOTE_UPDATE_RECEIVED,
-                    entityType = table.uppercase(),
-                    result = LogResult.SUCCESS,
-                    description = "Atualização remota recebida via Realtime na tabela $table ($eventType).",
-                    triggerSync = false
-                )
+                if (table != "system_logs") {
+                    systemLogRepository?.recordLog(
+                        action = SystemLogActions.REMOTE_UPDATE_RECEIVED,
+                        entityType = table.uppercase(),
+                        result = LogResult.SUCCESS,
+                        description = "Atualização remota recebida via Realtime na tabela $table ($eventType).",
+                        triggerSync = true
+                    )
+                }
             }
         },
         onReleaseChanged = {
@@ -126,8 +134,7 @@ class SyncManager(private val context: Context) {
                 log("Conexão detectada. Inicializando sincronização e cache...")
                 realtimeClient.start()
                 onVersionCheckRequested?.invoke(true)
-                fetchAllRemoteData()
-                syncPendingQueue()
+                syncPendingQueue(pullAfter = true)
             } else {
                 log("Dispositivo offline. Operando em modo cache local.")
             }
@@ -162,8 +169,7 @@ class SyncManager(private val context: Context) {
                         )
                     }
                     onVersionCheckRequested?.invoke(true)
-                    fetchAllRemoteData()
-                    syncPendingQueue()
+                    syncPendingQueue(pullAfter = true)
                 }
             }
 
@@ -305,8 +311,12 @@ class SyncManager(private val context: Context) {
                 if (response.isSuccessful) {
                     val remoteShifts = response.body().orEmpty()
                     if (remoteShifts.isNotEmpty()) {
-                        val entities = remoteShifts.map { dto ->
-                            val local = database.shiftDao().getShiftById(dto.id)
+                        val entities = remoteShifts.mapNotNull { dto ->
+                            val hasPendingInQueue = database.syncQueueDao().countPendingForEntity(dto.id) > 0
+                            if (hasPendingInQueue) {
+                                // Keep pending local shift untouched until local push completes
+                                return@mapNotNull null
+                            }
                             ShiftEntity(
                                 id = dto.id,
                                 hosterId = dto.hosterId,
@@ -317,11 +327,13 @@ class SyncManager(private val context: Context) {
                                 status = dto.status,
                                 deviceCreatedAt = DateTimeUtils.fromIsoUtc(dto.deviceCreatedAt),
                                 syncedAt = System.currentTimeMillis(),
-                                syncStatus = local?.syncStatus ?: "SINCRONIZADO"
+                                syncStatus = "SINCRONIZADO"
                             )
                         }
-                        database.shiftDao().insertOrUpdateShifts(entities)
-                        log("Turnos sincronizados e guardados em cache (${entities.size} turnos).")
+                        if (entities.isNotEmpty()) {
+                            database.shiftDao().insertOrUpdateShifts(entities)
+                        }
+                        log("Turnos sincronizados e guardados em cache (${remoteShifts.size} turnos).")
                     }
                 }
             } catch (e: Exception) {
@@ -340,12 +352,20 @@ class SyncManager(private val context: Context) {
                     val remoteAttendances = response.body().orEmpty()
                     if (remoteAttendances.isNotEmpty()) {
                         var conflictCount = 0
-                        val entities = remoteAttendances.map { dto ->
+                        val entities = remoteAttendances.mapNotNull { dto ->
                             val local = database.attendanceDao().getAttendanceById(dto.id)
+                            val hasPendingInQueue = database.syncQueueDao().countPendingForEntity(dto.id) > 0
                             val remoteUpdatedAt = DateTimeUtils.fromIsoUtc(dto.updatedAt)
-                            if (local != null && local.syncStatus == "PENDENTE" && local.updatedAt != remoteUpdatedAt) {
-                                conflictCount++
+
+                            if (local != null && hasPendingInQueue) {
+                                // Only report a genuine conflict if remote was edited strictly after local (>2s)
+                                if (remoteUpdatedAt > local.updatedAt + 2_000L) {
+                                    conflictCount++
+                                }
+                                // Preserve pending local changes until queue pushes them
+                                return@mapNotNull null
                             }
+
                             AttendanceEntity(
                                 id = dto.id,
                                 shiftId = dto.shiftId,
@@ -359,21 +379,23 @@ class SyncManager(private val context: Context) {
                                 updatedAt = remoteUpdatedAt,
                                 isEdited = local?.isEdited ?: false,
                                 isPreferential = dto.isPreferential,
-                                isDeleted = dto.isDeleted || (local?.isDeleted == true && local.syncStatus == "PENDENTE"),
-                                deletedAt = dto.deletedAt?.let { DateTimeUtils.fromIsoUtc(it) } ?: local?.deletedAt,
-                                deletedBy = dto.deletedBy ?: local?.deletedBy,
-                                deletionReason = dto.deletionReason ?: local?.deletionReason,
-                                syncStatus = if (local?.syncStatus == "PENDENTE") "PENDENTE" else "SINCRONIZADO"
+                                isDeleted = dto.isDeleted,
+                                deletedAt = dto.deletedAt?.let { DateTimeUtils.fromIsoUtc(it) },
+                                deletedBy = dto.deletedBy,
+                                deletionReason = dto.deletionReason,
+                                syncStatus = "SINCRONIZADO"
                             )
                         }
-                        database.attendanceDao().insertOrUpdateAttendances(entities)
-                        log("Atendimentos sincronizados em cache (${entities.size} registros).")
+                        if (entities.isNotEmpty()) {
+                            database.attendanceDao().insertOrUpdateAttendances(entities)
+                        }
+                        log("Atendimentos sincronizados em cache (${remoteAttendances.size} registros).")
                         if (conflictCount > 0) {
                             systemLogRepository?.recordLog(
                                 action = SystemLogActions.CONFLICT_DETECTED,
                                 entityType = "ATTENDANCE",
                                 result = LogResult.FAILURE,
-                                description = "Detectados $conflictCount conflito(s) de sincronização entre cache local pendente e servidor.",
+                                description = "Detectados $conflictCount conflito(s) de sincronização entre alterações locais pendentes e servidor.",
                                 triggerSync = false
                             )
                         }
@@ -478,9 +500,14 @@ class SyncManager(private val context: Context) {
 
     fun triggerSync() {
         scope.launch {
-            log("Sincronização manual solicitada...")
-            fetchAllRemoteData()
-            syncPendingQueue()
+            log("Sincronização solicitada...")
+            syncPendingQueue(pullAfter = true)
+        }
+    }
+
+    fun flushPendingQueueNow() {
+        scope.launch {
+            syncPendingQueue(pullAfter = false)
         }
     }
 
@@ -489,7 +516,7 @@ class SyncManager(private val context: Context) {
             database.syncQueueDao().resetFailedToPending()
             log("Reenviando operações com falha...")
             updatePendingCount()
-            syncPendingQueue()
+            syncPendingQueue(pullAfter = true)
         }
     }
 
@@ -498,7 +525,7 @@ class SyncManager(private val context: Context) {
         _pendingCount.value = count
     }
 
-    suspend fun syncPendingQueue() {
+    suspend fun syncPendingQueue(pullAfter: Boolean = false) {
         if (!isOnline) {
             updatePendingCount()
             _syncState.value = if (_pendingCount.value > 0) SyncState.PENDENTE else SyncState.OFFLINE
@@ -506,51 +533,86 @@ class SyncManager(private val context: Context) {
             return
         }
 
-        if (isSyncInProgress) return
-        isSyncInProgress = true
+        synchronized(syncLock) {
+            if (isSyncInProgress) {
+                resyncRequested = true
+                if (pullAfter) pullAfterSyncRequested = true
+                return
+            }
+            isSyncInProgress = true
+            resyncRequested = false
+            pullAfterSyncRequested = pullAfter
+        }
+
+        var shouldTriggerFollowUp = false
+        var followUpPullAfter = false
 
         withContext(Dispatchers.IO) {
             try {
-                val pendingList = database.syncQueueDao().getPendingOperations()
-                _pendingCount.value = pendingList.size
-
-                if (pendingList.isEmpty()) {
-                    _syncState.value = SyncState.SINCRONIZADO
-                    _lastSyncTime.value = System.currentTimeMillis()
-                    isSyncInProgress = false
-                    log("Fila vazia. Todos os dados sincronizados.")
-                    return@withContext
-                }
-
-                _syncState.value = SyncState.SINCRONIZANDO
-                log("Enviando ${pendingList.size} operações pendentes para o Supabase...")
-                val nonLogOpsCount = pendingList.count { it.entityType != "SYSTEM_LOG" }
-                if (nonLogOpsCount > 0) {
-                    systemLogRepository?.recordLog(
-                        action = SystemLogActions.SYNC_STARTED,
-                        entityType = "SYNC",
-                        result = LogResult.SUCCESS,
-                        description = "Sincronização iniciada com $nonLogOpsCount operação(ões) operacional(is) pendente(s).",
-                        triggerSync = false
-                    )
-                }
-
                 val service = SupabaseClient.getService(context)
                 val moshi = SupabaseClient.moshi
+                val attemptedIds = mutableSetOf<Long>()
+                var totalBusinessOpsSynced = 0
+                var hasAnyError = false
 
-                var hasError = false
+                // Drain loop: handles newly enqueued items & SYNC_STARTED/SYNC_FINISHED logs immediately
+                while (isOnline) {
+                    val allPending = database.syncQueueDao().getPendingOperations()
+                    val batch = allPending.filter { op ->
+                        op.status == "PENDING" || op.status == "SYNCING" || (op.status == "FAILED" && op.id !in attemptedIds)
+                    }
+                    if (batch.isEmpty()) break
 
-                for (op in pendingList) {
-                    try {
-                        database.syncQueueDao().updateStatus(op.id, "SYNCING")
-                        val success = processQueueItem(op, service, moshi)
-                        if (success) {
-                            database.syncQueueDao().delete(op.id)
-                            log("Operação ${op.entityType} [${op.entityId.take(8)}] enviada com sucesso!")
-                        } else {
-                            hasError = true
-                            val err = "Resposta com código de erro do servidor"
-                            log("Falha ao enviar ${op.entityType} [${op.entityId.take(8)}]: $err", isError = true)
+                    _pendingCount.value = allPending.size
+                    _syncState.value = SyncState.SINCRONIZANDO
+
+                    val nonLogOpsCount = batch.count { it.entityType != "SYSTEM_LOG" }
+                    if (nonLogOpsCount > 0) {
+                        log("Enviando ${batch.size} operações pendentes para o Supabase...")
+                        systemLogRepository?.recordLog(
+                            action = SystemLogActions.SYNC_STARTED,
+                            entityType = "SYNC",
+                            result = LogResult.SUCCESS,
+                            description = "Sincronização iniciada com $nonLogOpsCount operação(ões) operacional(is) pendente(s).",
+                            triggerSync = false
+                        )
+                    }
+
+                    var batchError = false
+                    var batchBusinessSynced = 0
+
+                    for (op in batch) {
+                        attemptedIds.add(op.id)
+                        try {
+                            database.syncQueueDao().updateStatus(op.id, "SYNCING")
+                            val (success, errorDetail) = processQueueItem(op, service, moshi)
+                            if (success) {
+                                database.syncQueueDao().delete(op.id)
+                                markLocalEntitySynced(op)
+                                if (op.entityType != "SYSTEM_LOG") {
+                                    batchBusinessSynced++
+                                    totalBusinessOpsSynced++
+                                }
+                                log("Operação ${op.entityType} [${op.entityId.take(8)}] enviada com sucesso!")
+                            } else {
+                                batchError = true
+                                hasAnyError = true
+                                val err = errorDetail ?: "Resposta com código de erro do servidor"
+                                log("Falha ao enviar ${op.entityType} [${op.entityId.take(8)}]: $err", isError = true)
+                                database.syncQueueDao().update(
+                                    op.copy(
+                                        status = "FAILED",
+                                        attempts = op.attempts + 1,
+                                        lastError = err,
+                                        updatedAt = System.currentTimeMillis()
+                                    )
+                                )
+                            }
+                        } catch (e: Exception) {
+                            batchError = true
+                            hasAnyError = true
+                            val err = e.message ?: "Erro de rede"
+                            log("Erro na operação ${op.entityType} [${op.entityId.take(8)}]: $err", isError = true)
                             database.syncQueueDao().update(
                                 op.copy(
                                     status = "FAILED",
@@ -560,26 +622,30 @@ class SyncManager(private val context: Context) {
                                 )
                             )
                         }
-                    } catch (e: Exception) {
-                        hasError = true
-                        val err = e.message ?: "Erro de rede"
-                        log("Erro na operação ${op.entityType} [${op.entityId.take(8)}]: $err", isError = true)
-                        database.syncQueueDao().update(
-                            op.copy(
-                                status = "FAILED",
-                                attempts = op.attempts + 1,
-                                lastError = err,
-                                updatedAt = System.currentTimeMillis()
-                            )
+                    }
+
+                    if (nonLogOpsCount > 0) {
+                        val remainingNow = database.syncQueueDao().getPendingCount()
+                        systemLogRepository?.recordLog(
+                            action = if (batchError) SystemLogActions.SYNC_FAILED else SystemLogActions.SYNC_FINISHED,
+                            entityType = "SYNC",
+                            result = if (batchError) LogResult.FAILURE else LogResult.SUCCESS,
+                            description = if (batchError) {
+                                "Sincronização concluída com falhas. $remainingNow item(ns) restante(s) na fila."
+                            } else {
+                                "Sincronização concluída com sucesso ($batchBusinessSynced operação(ões) enviada(s))."
+                            },
+                            triggerSync = false
                         )
                     }
                 }
 
                 val remaining = database.syncQueueDao().getPendingCount()
                 _pendingCount.value = remaining
-
                 _syncState.value = when {
-                    hasError && remaining > 0 -> SyncState.ERRO
+                    !isOnline && remaining > 0 -> SyncState.PENDENTE
+                    !isOnline -> SyncState.OFFLINE
+                    hasAnyError && remaining > 0 -> SyncState.ERRO
                     remaining > 0 -> SyncState.PENDENTE
                     else -> {
                         _lastSyncTime.value = System.currentTimeMillis()
@@ -587,22 +653,12 @@ class SyncManager(private val context: Context) {
                     }
                 }
 
-                if (nonLogOpsCount > 0) {
-                    systemLogRepository?.recordLog(
-                        action = if (hasError) SystemLogActions.SYNC_FAILED else SystemLogActions.SYNC_FINISHED,
-                        entityType = "SYNC",
-                        result = if (hasError) LogResult.FAILURE else LogResult.SUCCESS,
-                        description = if (hasError) {
-                            "Sincronização concluída com falhas. $remaining item(ns) restante(s) na fila."
-                        } else {
-                            "Sincronização concluída com sucesso ($nonLogOpsCount operação(ões) enviada(s))."
-                        },
-                        triggerSync = false
-                    )
+                if (remaining == 0 && totalBusinessOpsSynced == 0 && !hasAnyError) {
+                    log("Fila vazia. Todos os dados sincronizados.")
                 }
 
-                // If sync completed without errors, refresh cache
-                if (!hasError) {
+                val shouldPull = synchronized(syncLock) { pullAfterSyncRequested }
+                if (shouldPull && !hasAnyError && isOnline) {
                     fetchAllRemoteData()
                 }
             } catch (e: Exception) {
@@ -616,43 +672,87 @@ class SyncManager(private val context: Context) {
                     triggerSync = false
                 )
             } finally {
-                isSyncInProgress = false
+                synchronized(syncLock) {
+                    isSyncInProgress = false
+                    if (resyncRequested && isOnline) {
+                        shouldTriggerFollowUp = true
+                        followUpPullAfter = pullAfterSyncRequested
+                        resyncRequested = false
+                        pullAfterSyncRequested = false
+                    } else {
+                        resyncRequested = false
+                        pullAfterSyncRequested = false
+                    }
+                }
             }
         }
+
+        if (shouldTriggerFollowUp) {
+            syncPendingQueue(pullAfter = followUpPullAfter)
+        }
+    }
+
+    private suspend fun markLocalEntitySynced(op: SyncQueueEntity) {
+        when (op.entityType) {
+            "SHIFT", "SHIFT_CLOSE" -> {
+                if (database.syncQueueDao().countPendingForEntity(op.entityId) == 0) {
+                    database.shiftDao().updateSyncStatus(op.entityId, "SINCRONIZADO")
+                }
+            }
+            "ATTENDANCE", "ATTENDANCE_MEMBERS" -> {
+                if (database.syncQueueDao().countPendingForEntity(op.entityId) == 0) {
+                    database.attendanceDao().updateSyncStatus(op.entityId, "SINCRONIZADO")
+                }
+            }
+            "ATTENDANCE_AUDIT" -> {
+                database.attendanceAuditDao().updateSyncStatus(op.entityId, "SINCRONIZADO")
+            }
+            "QUEUE_EVENT" -> {
+                database.queueEventDao().updateSyncStatus(op.entityId, "SINCRONIZADO")
+            }
+        }
+    }
+
+    private fun extractError(res: retrofit2.Response<*>): String {
+        val body = try {
+            res.errorBody()?.string()?.take(250)?.takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
+        }
+        return if (body != null) "HTTP ${res.code()}: $body" else "HTTP ${res.code()}"
     }
 
     private suspend fun processQueueItem(
         op: SyncQueueEntity,
         service: com.example.data.remote.SupabaseService,
         moshi: com.squareup.moshi.Moshi
-    ): Boolean {
+    ): Pair<Boolean, String?> {
         return when (op.entityType) {
             "SHIFT" -> {
                 val adapter = moshi.adapter(SupabaseShiftDto::class.java)
-                val dto = adapter.fromJson(op.payloadJson) ?: return false
+                val dto = adapter.fromJson(op.payloadJson) ?: return Pair(false, "Payload inválido de turno")
                 val res = service.upsertShift(dto)
-                res.isSuccessful
+                Pair(res.isSuccessful, if (res.isSuccessful) null else extractError(res))
             }
             "SHIFT_CLOSE" -> {
                 val mapAdapter = moshi.adapter<Map<String, Any?>>(
                     Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java)
                 )
-                val map = mapAdapter.fromJson(op.payloadJson) ?: return false
+                val map = mapAdapter.fromJson(op.payloadJson) ?: return Pair(false, "Payload inválido ao encerrar turno")
                 val res = service.patchShift("eq.${op.entityId}", map)
-                res.isSuccessful
+                Pair(res.isSuccessful, if (res.isSuccessful) null else extractError(res))
             }
             "ATTENDANCE" -> {
                 val adapter = moshi.adapter(SupabaseAttendanceDto::class.java)
-                val dto = adapter.fromJson(op.payloadJson) ?: return false
+                val dto = adapter.fromJson(op.payloadJson) ?: return Pair(false, "Payload inválido de atendimento")
                 val res = service.upsertAttendance(dto)
-                res.isSuccessful
+                Pair(res.isSuccessful, if (res.isSuccessful) null else extractError(res))
             }
             "ATTENDANCE_MEMBERS" -> {
                 val type = Types.newParameterizedType(List::class.java, SupabaseMemberDto::class.java)
                 val adapter = moshi.adapter<List<SupabaseMemberDto>>(type)
-                val list = adapter.fromJson(op.payloadJson) ?: return false
+                val list = adapter.fromJson(op.payloadJson) ?: return Pair(false, "Payload inválido de integrantes")
 
-                // Sanitize: recurrent members MUST have null origin so Postgres CHECK and Moshi match
                 val sanitizedList = list.map { m ->
                     val cleanOrigin = if (m.classification == "NOVO") {
                         m.origin?.trim()?.takeIf { it.isNotBlank() }
@@ -662,87 +762,84 @@ class SyncManager(private val context: Context) {
                     m.copy(origin = cleanOrigin)
                 }
 
-                // Delete previous members if re-syncing an edit
                 try {
                     service.deleteMembersForAttendance("eq.${op.entityId}")
                 } catch (e: Exception) {
                     Log.w("SyncManager", "Note deleting previous members: ${e.message}")
                 }
 
-                // 1. Try bulk upsert first
                 val res = service.upsertMembers(sanitizedList)
                 if (res.isSuccessful) {
-                    true
+                    Pair(true, null)
                 } else {
-                    val bulkErr = res.errorBody()?.string() ?: "HTTP ${res.code()}"
+                    val bulkErr = extractError(res)
                     log("Aviso no envio em lote de integrantes ($bulkErr). Tentando envio individual...", isError = true)
 
-                    // 2. Fallback: send members individually
                     var allOk = true
-                    var lastErr: String? = null
+                    var lastErr: String? = bulkErr
                     for (member in sanitizedList) {
                         val singleRes = service.upsertMember(member)
                         if (!singleRes.isSuccessful) {
                             allOk = false
-                            lastErr = singleRes.errorBody()?.string() ?: "HTTP ${singleRes.code()}"
+                            lastErr = extractError(singleRes)
                             log("Falha ao enviar integrante ${member.memberNumber}: $lastErr", isError = true)
                         }
                     }
-                    if (!allOk && lastErr != null) {
-                        throw Exception(lastErr)
-                    }
-                    allOk
+                    Pair(allOk, if (allOk) null else lastErr)
                 }
             }
             "ATTENDANCE_AUDIT" -> {
                 val adapter = moshi.adapter(SupabaseAuditDto::class.java)
-                val dto = adapter.fromJson(op.payloadJson) ?: return false
+                val dto = adapter.fromJson(op.payloadJson) ?: return Pair(false, "Payload inválido de auditoria")
                 val res = service.insertAudit(dto)
-                res.isSuccessful
+                val ok = res.isSuccessful || res.code() == 409
+                Pair(ok, if (ok) null else extractError(res))
             }
             "QUEUE_EVENT" -> {
                 val adapter = moshi.adapter(SupabaseQueueDto::class.java)
-                val dto = adapter.fromJson(op.payloadJson) ?: return false
+                val dto = adapter.fromJson(op.payloadJson) ?: return Pair(false, "Payload inválido de fila")
                 val res = service.insertQueueEvent(dto)
-                res.isSuccessful
+                val ok = res.isSuccessful || res.code() == 409
+                Pair(ok, if (ok) null else extractError(res))
             }
             "HOSTER_ACTIVATION" -> {
                 val mapAdapter = moshi.adapter<Map<String, Any?>>(
                     Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java)
                 )
-                val map = mapAdapter.fromJson(op.payloadJson) ?: return false
+                val map = mapAdapter.fromJson(op.payloadJson) ?: return Pair(false, "Payload inválido de ativação")
                 val res = service.updateHoster("eq.${op.entityId}", map)
-                res.isSuccessful
+                Pair(res.isSuccessful, if (res.isSuccessful) null else extractError(res))
             }
             "HOSTER_INSERT" -> {
                 val adapter = moshi.adapter(SupabaseHosterDto::class.java)
-                val dto = adapter.fromJson(op.payloadJson) ?: return false
+                val dto = adapter.fromJson(op.payloadJson) ?: return Pair(false, "Payload inválido de hoster")
                 val res = service.upsertHoster(dto)
-                res.isSuccessful
+                Pair(res.isSuccessful, if (res.isSuccessful) null else extractError(res))
             }
             "HOSTER_UPDATE" -> {
                 val mapAdapter = moshi.adapter<Map<String, Any?>>(
                     Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java)
                 )
-                val map = mapAdapter.fromJson(op.payloadJson) ?: return false
+                val map = mapAdapter.fromJson(op.payloadJson) ?: return Pair(false, "Payload inválido de atualização")
                 val res = service.updateHoster("eq.${op.entityId}", map)
-                res.isSuccessful
+                Pair(res.isSuccessful, if (res.isSuccessful) null else extractError(res))
             }
             "HOSTER_DELETE" -> {
                 val res = service.deleteHoster("eq.${op.entityId}")
-                res.isSuccessful
+                Pair(res.isSuccessful, if (res.isSuccessful) null else extractError(res))
             }
             "SYSTEM_LOG" -> {
                 val adapter = moshi.adapter(SupabaseSystemLogDto::class.java)
-                val dto = adapter.fromJson(op.payloadJson) ?: return false
+                val dto = adapter.fromJson(op.payloadJson) ?: return Pair(false, "Payload inválido de log")
                 val nowIso = DateTimeUtils.toIsoUtc(System.currentTimeMillis())
                 val res = service.upsertSystemLog(dto.copy(syncedAt = nowIso))
-                if (res.isSuccessful) {
+                val ok = res.isSuccessful || res.code() == 409
+                if (ok) {
                     database.systemLogDao().markSynced(dto.id, System.currentTimeMillis())
                 }
-                res.isSuccessful
+                Pair(ok, if (ok) null else extractError(res))
             }
-            else -> true
+            else -> Pair(true, null)
         }
     }
 }

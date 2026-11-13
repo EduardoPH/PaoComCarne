@@ -77,6 +77,9 @@ interface ShiftDao {
 
     @Update
     suspend fun updateShift(shift: ShiftEntity)
+
+    @Query("UPDATE shifts SET syncStatus = :status WHERE id = :id")
+    suspend fun updateSyncStatus(id: String, status: String)
 }
 
 @Dao
@@ -113,6 +116,9 @@ interface AttendanceDao {
 
     @Query("SELECT COUNT(*) FROM attendances WHERE shiftId = :shiftId AND isDeleted = 0")
     suspend fun countAttendancesInShift(shiftId: String): Int
+
+    @Query("UPDATE attendances SET syncStatus = :status WHERE id = :id")
+    suspend fun updateSyncStatus(id: String, status: String)
 }
 
 @Dao
@@ -143,6 +149,9 @@ interface AttendanceAuditDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAudit(audit: AttendanceAuditEntity)
+
+    @Query("UPDATE attendance_audit SET syncStatus = :status WHERE id = :id")
+    suspend fun updateSyncStatus(id: String, status: String)
 }
 
 @Dao
@@ -161,6 +170,9 @@ interface QueueEventDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertQueueEvents(events: List<QueueEventEntity>)
+
+    @Query("UPDATE queue_events SET syncStatus = :status WHERE id = :id")
+    suspend fun updateSyncStatus(id: String, status: String)
 }
 
 @Dao
@@ -194,6 +206,9 @@ interface SyncQueueDao {
 
     @Query("UPDATE sync_queue SET status = 'PENDING', attempts = 0 WHERE status = 'FAILED'")
     suspend fun resetFailedToPending()
+
+    @Query("SELECT COUNT(*) FROM sync_queue WHERE entityId = :entityId AND status IN ('PENDING', 'FAILED', 'SYNCING')")
+    suspend fun countPendingForEntity(entityId: String): Int
 }
 
 @Dao

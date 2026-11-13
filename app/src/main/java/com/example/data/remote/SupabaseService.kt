@@ -86,7 +86,7 @@ interface SupabaseService {
     ): Response<ResponseBody>
 
     @POST("rest/v1/attendance_audit")
-    @Headers("Prefer: return=minimal")
+    @Headers("Prefer: return=minimal, resolution=ignore-duplicates")
     suspend fun insertAudit(
         @Body audit: SupabaseAuditDto
     ): Response<ResponseBody>
@@ -95,7 +95,7 @@ interface SupabaseService {
     suspend fun getQueueEvents(): Response<List<SupabaseQueueDto>>
 
     @POST("rest/v1/queue_events")
-    @Headers("Prefer: return=minimal")
+    @Headers("Prefer: return=minimal, resolution=ignore-duplicates")
     suspend fun insertQueueEvent(
         @Body queue: SupabaseQueueDto
     ): Response<ResponseBody>
@@ -107,7 +107,7 @@ interface SupabaseService {
     suspend fun getSystemLogs(): Response<List<SupabaseSystemLogDto>>
 
     @POST("rest/v1/system_logs")
-    @Headers("Prefer: return=minimal, resolution=merge-duplicates")
+    @Headers("Prefer: return=minimal, resolution=ignore-duplicates")
     suspend fun upsertSystemLog(
         @Body log: SupabaseSystemLogDto
     ): Response<ResponseBody>

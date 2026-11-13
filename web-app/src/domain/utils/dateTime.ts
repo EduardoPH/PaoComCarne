@@ -32,11 +32,7 @@ export function fromInputDateValue(value: string): number {
 }
 
 export function toIsoUtc(timestamp: number): string {
-  const d = new Date(timestamp);
-  return (
-    `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}` +
-    `T${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}Z`
-  );
+  return new Date(timestamp).toISOString();
 }
 
 export function fromIsoUtc(isoString?: string | null): number {

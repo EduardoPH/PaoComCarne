@@ -6,27 +6,29 @@ import java.util.Locale
 import java.util.TimeZone
 
 object DateTimeUtils {
-    private val timeFormat = SimpleDateFormat("HH:mm", Locale.forLanguageTag("pt-BR"))
-    private val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.forLanguageTag("pt-BR"))
-    private val dateTimeFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.forLanguageTag("pt-BR"))
-    private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
-        timeZone = TimeZone.getTimeZone("UTC")
+    private val isoFormatThreadLocal = ThreadLocal.withInitial {
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }
     }
 
     fun formatTime(timestamp: Long): String {
-        return timeFormat.format(Date(timestamp))
+        return SimpleDateFormat("HH:mm", Locale.forLanguageTag("pt-BR")).format(Date(timestamp))
     }
 
     fun formatDate(timestamp: Long): String {
-        return dateFormat.format(Date(timestamp))
+        return SimpleDateFormat("dd/MM/yyyy", Locale.forLanguageTag("pt-BR")).format(Date(timestamp))
     }
 
     fun formatDateTime(timestamp: Long): String {
-        return dateTimeFormat.format(Date(timestamp))
+        return SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.forLanguageTag("pt-BR")).format(Date(timestamp))
     }
 
     fun toIsoUtc(timestamp: Long): String {
-        return isoFormat.format(Date(timestamp))
+        return (isoFormatThreadLocal.get()
+            ?: SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }).format(Date(timestamp))
     }
 
     fun fromIsoUtc(isoString: String): Long {
@@ -43,6 +45,7 @@ object DateTimeUtils {
         }
         // Fallback with SimpleDateFormat
         val patterns = arrayOf(
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
             "yyyy-MM-dd'T'HH:mm:ss'Z'",
             "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX",
             "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",

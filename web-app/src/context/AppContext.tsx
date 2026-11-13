@@ -41,12 +41,14 @@ interface AppContextValue {
   reloadLocalState: () => Promise<void>;
 }
 
+export const WEB_MAINTENANCE_MODE = true;
+
 const AppContext = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(WEB_MAINTENANCE_MODE);
   const [currentHoster, setCurrentHoster] = useState<Hoster | null>(() =>
-    authRepository.getCurrentHoster()
+    WEB_MAINTENANCE_MODE ? null : authRepository.getCurrentHoster()
   );
   const [hosters, setHosters] = useState<Hoster[]>([]);
   const [currentShift, setCurrentShift] = useState<Shift | null>(null);
@@ -78,12 +80,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const recheckVersion = useCallback(async () => {
+    if (WEB_MAINTENANCE_MODE) return;
     const online = typeof navigator !== 'undefined' ? navigator.onLine : syncManager.getSnapshot().isOnline;
     const h = authRepository.getCurrentHoster();
     await updateService.checkVersion(online, h?.id ?? null, h?.name ?? null);
   }, []);
 
   const applyWebUpdate = useCallback(async () => {
+    if (WEB_MAINTENANCE_MODE) return;
     const h = authRepository.getCurrentHoster();
     await updateService.applyWebUpdate(h?.id ?? null, h?.name ?? null);
   }, []);
@@ -99,6 +103,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [snackbarMessage]);
 
   const reloadLocalState = useCallback(async () => {
+    if (WEB_MAINTENANCE_MODE) return;
     const activeHoster = authRepository.getCurrentHoster();
     const [activeHosters, shifts, atts, members, logs] = await Promise.all([
       authRepository.getActiveHosters(),
@@ -136,6 +141,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (WEB_MAINTENANCE_MODE) {
+      setReady(true);
+      return;
+    }
+
     let unsubDb: (() => void) | undefined;
     let unsubSync: (() => void) | undefined;
     let unsubAuth: (() => void) | undefined;
