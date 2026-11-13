@@ -3,6 +3,7 @@ import { BarChart3, Clock, Eye, Store } from 'lucide-react';
 import { useApp } from './context/AppContext';
 import { authRepository } from './data/repositories/authRepository';
 import { BrandLogoBox } from './presentation/components/CommonComponents';
+import { FloatingInstallButton } from './presentation/components/FloatingInstallButton';
 import { SyncLogsModal } from './presentation/components/SyncLogsModal';
 import { AdminScreen } from './presentation/screens/AdminScreen';
 import { HostersManagementScreen } from './presentation/screens/HostersManagementScreen';
@@ -163,6 +164,13 @@ export default function App() {
           >
             {snackbarMessage}
           </div>
+        )}
+
+        {/* Floating App Download/Install Corner Pill */}
+        {ready && (
+          <FloatingInstallButton
+            hasBottomBar={Boolean(currentHoster && !currentHoster.isAdmin)}
+          />
         )}
 
         {/* Global Sync Logs Modal */}

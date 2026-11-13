@@ -18,6 +18,7 @@ async function loadCoreModules() {
       contents: `
         export * as security from './src/domain/utils/security.ts';
         export * as xlsx from './src/domain/utils/xlsxGenerator.ts';
+        export * as platformDetect from './src/domain/utils/platformDetect.ts';
         export { receptionRepository } from './src/data/repositories/receptionRepository.ts';
         export { authRepository } from './src/data/repositories/authRepository.ts';
         export { localDb } from './src/data/local/database.ts';
@@ -226,4 +227,66 @@ test('XLSX generator creates valid 3-sheet workbook with daily separation and gr
   assert.match(sheet3Xml, /TOTAL GERAL DO PERÍODO/);
   assert.match(sheet3Xml, /Instagram/);
   assert.match(sheet3Xml, /TikTok/);
+});
+
+test('Platform detector accurately identifies iOS, Android, Windows, macOS and standalone mode', async () => {
+  const { platformDetect } = await loadCoreModules();
+  const { detectClientPlatform } = platformDetect;
+
+  const iphoneSafari = detectClientPlatform(
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+    'iPhone',
+    5,
+    false
+  );
+  assert.equal(iphoneSafari.os, 'IOS');
+  assert.equal(iphoneSafari.osLabel, 'iPhone (iOS)');
+  assert.equal(iphoneSafari.browser, 'SAFARI');
+  assert.equal(iphoneSafari.isIosNonSafari, false);
+
+  const iphoneChrome = detectClientPlatform(
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/125.0.0.0 Mobile/15E148 Safari/604.1',
+    'iPhone',
+    5,
+    false
+  );
+  assert.equal(iphoneChrome.os, 'IOS');
+  assert.equal(iphoneChrome.browser, 'CHROME');
+  assert.equal(iphoneChrome.isIosNonSafari, true);
+
+  const ipadDesktopMode = detectClientPlatform(
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15',
+    'MacIntel',
+    5,
+    false
+  );
+  assert.equal(ipadDesktopMode.os, 'IOS');
+  assert.equal(ipadDesktopMode.osLabel, 'iPad (iOS)');
+
+  const androidChrome = detectClientPlatform(
+    'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
+    'Linux armv8l',
+    5,
+    false
+  );
+  assert.equal(androidChrome.os, 'ANDROID');
+  assert.equal(androidChrome.browser, 'CHROME');
+
+  const windowsEdge = detectClientPlatform(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0',
+    'Win32',
+    0,
+    false
+  );
+  assert.equal(windowsEdge.os, 'WINDOWS');
+  assert.equal(windowsEdge.browser, 'EDGE');
+
+  const macStandalone = detectClientPlatform(
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15',
+    'MacIntel',
+    0,
+    true
+  );
+  assert.equal(macStandalone.os, 'MACOS');
+  assert.equal(macStandalone.isStandalone, true);
 });
