@@ -5,20 +5,57 @@ on:
     branches:
       - main
       - master
-    tags:
-      - 'v*'
-  pull_request:
-    branches:
-      - main
-      - master
+    paths:
+      - 'app/build.gradle.kts'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  check_version:
+    name: Check Version Change
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify versionCode or versionName Changed
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Disparo manual: build habilitado."
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            BEFORE="${AFTER}~1"
+            if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              echo "Commit inicial detectado: build habilitado."
+              echo "should_build=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          if git diff "$BEFORE" "$AFTER" -- app/build.gradle.kts | grep -qE '^\+.*(versionCode|versionName)\s*='; then
+            echo "Alteração de versão detectada em app/build.gradle.kts: build habilitado."
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "app/build.gradle.kts foi alterado, mas versionCode/versionName não mudaram. Build ignorado."
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+
   build:
     name: Build Android APKs
+    needs: check_version
+    if: needs.check_version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
 
     env:
