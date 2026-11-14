@@ -7,7 +7,6 @@ on:
       - master
     tags:
       - 'v*'
-      - '*'
   pull_request:
     branches:
       - main
@@ -21,6 +20,9 @@ jobs:
   build:
     name: Build Android APKs
     runs-on: ubuntu-latest
+
+    env:
+      JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
 
     steps:
       - name: Checkout Code
@@ -38,45 +40,175 @@ jobs:
       - name: Make Gradle Wrapper Executable
         run: chmod +x ./gradlew
 
-      - name: Restore Project Debug Keystore
+      - name: Restore Project Debug Keystore (Permanent Signature)
         run: |
           if [ -f debug.keystore.base64 ]; then
             base64 -d debug.keystore.base64 > debug.keystore
+            echo "Restored debug.keystore from debug.keystore.base64"
+            keytool -list -keystore debug.keystore -storepass android | grep -E "Alias|SHA256" || true
+          else
+            echo "::error::debug.keystore.base64 não encontrado no repositório!"
+            exit 1
           fi
 
-      - name: Prepare Signing Keystore
+      - name: Prepare Release Keystore (If Configured)
+        id: release_key
         run: |
           if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
-            echo "Usando chave customizada dos Secrets do repositório"
+            echo "Usando keystore release customizada dos Secrets do repositório"
             echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > my-upload-key.jks
             echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/my-upload-key.jks" >> $GITHUB_ENV
             echo "STORE_PASSWORD=${{ secrets.STORE_PASSWORD || 'android' }}" >> $GITHUB_ENV
             echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD || 'android' }}" >> $GITHUB_ENV
+            echo "has_release=true" >> $GITHUB_OUTPUT
           else
-            echo "Gerando keystore de assinatura release automática (alias upload)"
-            keytool -genkeypair -v -keystore my-upload-key.jks \
-              -alias upload \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -storepass android \
-              -keypass android \
-              -dname "CN=PaoComCarne, OU=App, O=PaoComCarne, L=SaoPaulo, S=SP, C=BR"
-            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/my-upload-key.jks" >> $GITHUB_ENV
-            echo "STORE_PASSWORD=android" >> $GITHUB_ENV
-            echo "KEY_PASSWORD=android" >> $GITHUB_ENV
+            echo "RELEASE_KEYSTORE_BASE64 não configurada; mantendo assinatura permanente debug.keystore para compatibilidade de atualização."
+            echo "has_release=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build APKs (Release & Debug)
-        run: ./gradlew assembleRelease assembleDebug --stacktrace
+      - name: Build Debug APK (Permanent Signature)
+        run: |
+          ./gradlew :app:assembleDebug \
+            --no-daemon \
+            --max-workers=2 \
+            -Dorg.gradle.parallel=false \
+            -Dorg.gradle.configuration-cache=false \
+            -Dorg.gradle.jvmargs="-Xmx3g -Djava.awt.headless=true -Dfile.encoding=UTF-8" \
+            -Dkotlin.compiler.execution.strategy=daemon \
+            --stacktrace
+
+      - name: Build Release APK (When Custom Keystore Exists)
+        if: steps.release_key.outputs.has_release == 'true'
+        run: |
+          ./gradlew :app:assembleRelease \
+            --no-daemon \
+            --max-workers=2 \
+            -Dorg.gradle.parallel=false \
+            -Dorg.gradle.configuration-cache=false \
+            -Dorg.gradle.jvmargs="-Xmx3g -Djava.awt.headless=true -Dfile.encoding=UTF-8" \
+            -Dkotlin.compiler.execution.strategy=daemon \
+            --stacktrace
+
+      - name: Collect Built APKs
+        run: |
+          mkdir -p dist-apks
+          cp app/build/outputs/apk/debug/app-debug.apk dist-apks/app-debug.apk
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            cp app/build/outputs/apk/release/app-release.apk dist-apks/app-release.apk
+          fi
+          ls -lh dist-apks/
+
+      - name: Publish APK & Release Policy to Supabase
+        if: github.event_name != 'pull_request'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || 'https://iodvkbzszlrphuqvywbr.supabase.co' }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: |
+          if [ -z "$SUPABASE_SECRET_KEY" ]; then
+            echo "SUPABASE_SECRET_KEY não configurado nos Secrets do GitHub. Pulando publicação automática no Supabase."
+            exit 0
+          fi
+
+          python3 - <<'PY'
+          import json, hashlib, os, urllib.request
+
+          url = os.environ["SUPABASE_URL"].rstrip("/")
+          secret = os.environ["SUPABASE_SECRET_KEY"]
+
+          if os.path.exists("app/build/outputs/apk/release/app-release.apk") and os.path.exists("app/build/outputs/apk/release/output-metadata.json"):
+              apk_file = "app/build/outputs/apk/release/app-release.apk"
+              meta_file = "app/build/outputs/apk/release/output-metadata.json"
+          else:
+              apk_file = "app/build/outputs/apk/debug/app-debug.apk"
+              meta_file = "app/build/outputs/apk/debug/output-metadata.json"
+
+          with open(meta_file, "r", encoding="utf-8") as f:
+              meta = json.load(f)
+          elem = meta["elements"][0]
+          version_code = int(elem["versionCode"])
+          version_name = str(elem["versionName"])
+          storage_name = f"pao-com-carne-v{version_name}.apk"
+          apk_path = f"app-releases/{storage_name}"
+
+          with open(apk_file, "rb") as f:
+              apk_bytes = f.read()
+          sha256 = hashlib.sha256(apk_bytes).hexdigest()
+          print(f"Uploading {apk_file} -> {apk_path} (version={version_name}/{version_code}, sha256={sha256})")
+
+          # 1. Upload / overwrite APK in Supabase Storage
+          up_req = urllib.request.Request(
+              f"{url}/storage/v1/object/{apk_path}",
+              data=apk_bytes,
+              method="POST",
+              headers={
+                  "apikey": secret,
+                  "Authorization": f"Bearer {secret}",
+                  "Content-Type": "application/vnd.android.package-archive",
+                  "x-upsert": "true",
+              },
+          )
+          with urllib.request.urlopen(up_req, timeout=180) as r:
+              print("Storage upload:", r.status, r.read().decode())
+
+          # 2. Deactivate older releases
+          patch_req = urllib.request.Request(
+              f"{url}/rest/v1/app_releases?version_code=lt.{version_code}",
+              data=json.dumps({"active": False}).encode(),
+              method="PATCH",
+              headers={
+                  "apikey": secret,
+                  "Authorization": f"Bearer {secret}",
+                  "Content-Type": "application/json",
+                  "Prefer": "return=minimal",
+              },
+          )
+          with urllib.request.urlopen(patch_req, timeout=30) as r:
+              print("Deactivated older releases:", r.status)
+
+          # 3. Clean existing row with same version_code before inserting updated artifact
+          del_req = urllib.request.Request(
+              f"{url}/rest/v1/app_releases?version_code=eq.{version_code}",
+              method="DELETE",
+              headers={
+                  "apikey": secret,
+                  "Authorization": f"Bearer {secret}",
+              },
+          )
+          with urllib.request.urlopen(del_req, timeout=30) as r:
+              print("Cleaned same version_code:", r.status)
+
+          # 4. Insert active mandatory release
+          payload = {
+              "version_name": version_name,
+              "version_code": version_code,
+              "min_supported_code": version_code,
+              "mandatory": True,
+              "apk_path": apk_path,
+              "sha256": sha256,
+              "changelog": f"Atualização v{version_name} (código {version_code}) publicada automaticamente.",
+              "release_reason": "Atualização obrigatória para manter compatibilidade e integridade dos dados.",
+              "active": True,
+          }
+          ins_req = urllib.request.Request(
+              f"{url}/rest/v1/app_releases",
+              data=json.dumps(payload).encode(),
+              method="POST",
+              headers={
+                  "apikey": secret,
+                  "Authorization": f"Bearer {secret}",
+                  "Content-Type": "application/json",
+                  "Prefer": "return=representation",
+              },
+          )
+          with urllib.request.urlopen(ins_req, timeout=30) as r:
+              print("Inserted app_releases:", r.status, r.read().decode())
+          PY
 
       - name: Upload APKs as Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: PaoComCarne-APKs
-          path: |
-            app/build/outputs/apk/release/app-release.apk
-            app/build/outputs/apk/debug/app-debug.apk
+          path: dist-apks/*.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -84,9 +216,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            app/build/outputs/apk/release/app-release.apk
-            app/build/outputs/apk/debug/app-debug.apk
+          files: dist-apks/*.apk
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
