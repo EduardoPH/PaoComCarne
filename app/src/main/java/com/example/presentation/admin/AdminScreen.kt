@@ -181,6 +181,19 @@ fun AdminScreen(
                                     color = PaoAnthracite
                                 )
                             }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Solo / Dupla / Grupo:", fontSize = 12.sp, color = PaoAnthraciteMuted)
+                                Text(
+                                    text = "${successData.soloCount} / ${successData.duplaCount} / ${successData.grupoCount}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = PaoAnthracite
+                                )
+                            }
                         }
                     }
 
@@ -826,6 +839,39 @@ fun AdminScreen(
                     }
                 }
 
+                item {
+                    val totalAtt = metrics.totalAttendances.coerceAtLeast(1)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AdminMetricCard(
+                            title = "Solo",
+                            value = metrics.soloCount.toString(),
+                            valueColor = PaoRed,
+                            subtitle = "${if (metrics.totalAttendances > 0) (metrics.soloCount * 100 / totalAtt) else 0}% dos atend.",
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("admin_metric_solo")
+                        )
+                        AdminMetricCard(
+                            title = "Dupla",
+                            value = metrics.duplaCount.toString(),
+                            valueColor = PaoAnthracite,
+                            subtitle = "${if (metrics.totalAttendances > 0) (metrics.duplaCount * 100 / totalAtt) else 0}% dos atend.",
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("admin_metric_dupla")
+                        )
+                        AdminMetricCard(
+                            title = "Grupo",
+                            value = metrics.grupoCount.toString(),
+                            valueColor = StatusAmber,
+                            subtitle = "${if (metrics.totalAttendances > 0) (metrics.grupoCount * 100 / totalAtt) else 0}% dos atend.",
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("admin_metric_grupo")
+                        )
+                    }
+                }
+
                 // Distribution of new clients by origin
                 item {
                     Card(
@@ -1039,7 +1085,7 @@ fun AdminScreen(
                             }
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Gera uma planilha Excel com 3 abas completas (Atendimentos, Clientes Detalhado e Resumo Diário & Origens com separação por dia e consolidação geral).",
+                                text = "Gera uma planilha Excel com 3 abas completas e totais de conclusão no final (Atendimentos com Solo/Dupla/Grupo, Clientes com Total de Clientes e Resumo Diário & Origens consolidado).",
                                 fontSize = 12.sp,
                                 color = PaoAnthraciteMuted
                             )

@@ -15,7 +15,10 @@ sealed class ExportResult {
         val file: File,
         val fileName: String,
         val rowCount: Int,
-        val totalClients: Int = 0
+        val totalClients: Int = 0,
+        val soloCount: Int = 0,
+        val duplaCount: Int = 0,
+        val grupoCount: Int = 0
     ) : ExportResult()
     data class Blocked(val reason: String, val openShiftsCount: Int = 0, val pendingSyncCount: Int = 0) : ExportResult()
     data class Failure(val message: String) : ExportResult()
@@ -181,7 +184,11 @@ class ExportRepository(
                     newClients = dayNew,
                     returningClients = dayRet,
                     preferentialCount = dayPref,
-                    originsBreakdown = dayOrigins
+                    originsBreakdown = dayOrigins,
+                    totalAttendances = dayAtts.size,
+                    soloCount = dayAtts.count { it.type.equals("SOLO", ignoreCase = true) },
+                    duplaCount = dayAtts.count { it.type.equals("DUPLA", ignoreCase = true) },
+                    grupoCount = dayAtts.count { it.type.equals("GRUPO", ignoreCase = true) }
                 )
             }
 
@@ -200,6 +207,10 @@ class ExportRepository(
             val grandNewClients = filteredAttendances.sumOf { it.newMembers }
             val grandReturningClients = filteredAttendances.sumOf { it.returningMembers }
             val grandPreferentialCount = filteredAttendances.count { it.isPreferential }
+            val grandTotalAttendances = filteredAttendances.size
+            val grandSoloCount = filteredAttendances.count { it.type.equals("SOLO", ignoreCase = true) }
+            val grandDuplaCount = filteredAttendances.count { it.type.equals("DUPLA", ignoreCase = true) }
+            val grandGrupoCount = filteredAttendances.count { it.type.equals("GRUPO", ignoreCase = true) }
 
             val consolidatedSummary = XlsxGenerator.ReportConsolidatedSummary(
                 dailySummaries = dailySummaries,
@@ -209,7 +220,11 @@ class ExportRepository(
                 grandNewClients = grandNewClients,
                 grandReturningClients = grandReturningClients,
                 grandPreferentialCount = grandPreferentialCount,
-                grandOriginsBreakdown = grandOrigins
+                grandOriginsBreakdown = grandOrigins,
+                grandTotalAttendances = grandTotalAttendances,
+                grandSoloCount = grandSoloCount,
+                grandDuplaCount = grandDuplaCount,
+                grandGrupoCount = grandGrupoCount
             )
 
             val startDateStr = DateTimeUtils.formatFileDate(startMillis)
@@ -227,7 +242,7 @@ class ExportRepository(
                 entityType = "REPORT",
                 entityId = fileName,
                 result = LogResult.SUCCESS,
-                description = "Relatório XLSX gerado: ${attendanceRows.size} atendimento(s), $grandTotalClients cliente(s).",
+                description = "Relatório XLSX gerado: ${attendanceRows.size} atendimento(s) ($grandSoloCount solo, $grandDuplaCount dupla, $grandGrupoCount grupo), $grandTotalClients cliente(s).",
                 userId = actorUserId,
                 userName = actorUserName
             )
@@ -236,7 +251,10 @@ class ExportRepository(
                 file = targetFile,
                 fileName = fileName,
                 rowCount = attendanceRows.size,
-                totalClients = grandTotalClients
+                totalClients = grandTotalClients,
+                soloCount = grandSoloCount,
+                duplaCount = grandDuplaCount,
+                grupoCount = grandGrupoCount
             )
         } catch (e: Exception) {
             val err = e.message ?: "Erro desconhecido ao gerar arquivo Excel."

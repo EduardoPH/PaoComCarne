@@ -97,6 +97,9 @@ fun ShiftScreen(
     val totalPeople = attendances.sumOf { it.attendance.totalMembers }
     val newCount = attendances.sumOf { it.attendance.newMembers }
     val returningCount = attendances.sumOf { it.attendance.returningMembers }
+    val soloCount = attendances.count { it.attendance.type.name == "SOLO" }
+    val duplaCount = attendances.count { it.attendance.type.name == "DUPLA" }
+    val grupoCount = attendances.count { it.attendance.type.name == "GRUPO" }
 
     if (uiState.showCloseShiftDialog && shift != null) {
         CloseShiftDialog(
@@ -307,6 +310,9 @@ fun ShiftScreen(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         DetailLine("Atendimentos Registrados", totalAtt.toString())
+                        DetailLine("Atendimentos Solo", soloCount.toString(), PaoRed)
+                        DetailLine("Atendimentos Dupla", duplaCount.toString(), PaoAnthracite)
+                        DetailLine("Atendimentos Grupo", grupoCount.toString(), StatusAmber)
                         DetailLine("Pessoas Atendidas", totalPeople.toString())
                         DetailLine("Novos Clientes", newCount.toString(), StatusGreen)
                         DetailLine("Clientes Recorrentes", returningCount.toString(), PaoAnthracite)

@@ -36,7 +36,11 @@ object XlsxGenerator {
         val newClients: Int,
         val returningClients: Int,
         val preferentialCount: Int,
-        val originsBreakdown: Map<String, Int>
+        val originsBreakdown: Map<String, Int>,
+        val totalAttendances: Int = 0,
+        val soloCount: Int = 0,
+        val duplaCount: Int = 0,
+        val grupoCount: Int = 0
     )
 
     data class ReportConsolidatedSummary(
@@ -47,7 +51,11 @@ object XlsxGenerator {
         val grandNewClients: Int,
         val grandReturningClients: Int,
         val grandPreferentialCount: Int,
-        val grandOriginsBreakdown: Map<String, Int>
+        val grandOriginsBreakdown: Map<String, Int>,
+        val grandTotalAttendances: Int = 0,
+        val grandSoloCount: Int = 0,
+        val grandDuplaCount: Int = 0,
+        val grandGrupoCount: Int = 0
     )
 
     fun generateWorkbook(
@@ -246,6 +254,43 @@ object XlsxGenerator {
             sb.append("    </row>\n")
         }
 
+        // Conclusão / Totais no fim da planilha de Atendimentos
+        val soloCount = rows.count { it.type.equals("SOLO", ignoreCase = true) }
+        val duplaCount = rows.count { it.type.equals("DUPLA", ignoreCase = true) }
+        val grupoCount = rows.count { it.type.equals("GRUPO", ignoreCase = true) }
+        val totalMembers = rows.sumOf { it.totalMembers }
+        val totalNew = rows.sumOf { it.newMembers }
+        val totalReturning = rows.sumOf { it.returningMembers }
+        val totalPref = rows.count { it.isPreferential.equals("Sim", ignoreCase = true) }
+
+        var summaryRow = rows.size + 3
+        sb.append("    <row r=\"$summaryRow\">\n")
+        sb.append("      <c r=\"A$summaryRow\" s=\"1\" t=\"inlineStr\"><is><t>CONCLUSÃO — TOTAIS DE ATENDIMENTOS</t></is></c>\n")
+        sb.append("      <c r=\"B$summaryRow\" s=\"1\" t=\"inlineStr\"><is><t>QUANTIDADE</t></is></c>\n")
+        sb.append("      <c r=\"C$summaryRow\" s=\"1\" t=\"inlineStr\"><is><t>DETALHAMENTO</t></is></c>\n")
+        sb.append("    </row>\n")
+        summaryRow++
+
+        val attendanceConclusions = listOf(
+            Triple("Total de Atendimentos", rows.size, "Registros válidos no período"),
+            Triple("Total Solo", soloCount, "Atendimentos individuais (1 pessoa)"),
+            Triple("Total Dupla", duplaCount, "Atendimentos em dupla (2 pessoas)"),
+            Triple("Total Grupo", grupoCount, "Atendimentos em grupo (3+ pessoas)"),
+            Triple("Total de Clientes / Integrantes", totalMembers, "Soma de pessoas atendidas"),
+            Triple("Total Clientes Novos", totalNew, "Primeira vez na casa"),
+            Triple("Total Clientes Recorrentes", totalReturning, "Clientes habituais"),
+            Triple("Total Atendimentos Preferenciais", totalPref, "Prioridade legal")
+        )
+        attendanceConclusions.forEachIndexed { idx, (label, value, detail) ->
+            val labelStyle = if (idx in 0..3) " s=\"3\"" else ""
+            sb.append("    <row r=\"$summaryRow\">\n")
+            sb.append("      <c r=\"A$summaryRow\"$labelStyle t=\"inlineStr\"><is><t>${escapeXml(label)}</t></is></c>\n")
+            sb.append("      <c r=\"B$summaryRow\"><v>$value</v></c>\n")
+            sb.append("      <c r=\"C$summaryRow\" t=\"inlineStr\"><is><t>${escapeXml(detail)}</t></is></c>\n")
+            sb.append("    </row>\n")
+            summaryRow++
+        }
+
         sb.append("""  </sheetData>
 </worksheet>""")
         return sb.toString()
@@ -293,6 +338,36 @@ object XlsxGenerator {
             sb.append("      <c r=\"E$rowNum\" t=\"inlineStr\"><is><t>${escapeXml(client.origin)}</t></is></c>\n")
             sb.append("      <c r=\"F$rowNum\" t=\"inlineStr\"><is><t>${escapeXml(client.isPreferential)}</t></is></c>\n")
             sb.append("    </row>\n")
+        }
+
+        // Conclusão / Total de clientes no fim da planilha de Clientes
+        val totalClients = clients.size
+        val totalNewClients = clients.count { it.classification.equals("Novo", ignoreCase = true) }
+        val totalReturningClients = clients.count { it.classification.equals("Recorrente", ignoreCase = true) }
+        val totalPreferentialClients = clients.count { it.isPreferential.equals("Sim", ignoreCase = true) }
+
+        var summaryRow = clients.size + 3
+        sb.append("    <row r=\"$summaryRow\">\n")
+        sb.append("      <c r=\"A$summaryRow\" s=\"1\" t=\"inlineStr\"><is><t>CONCLUSÃO — TOTAIS DE CLIENTES</t></is></c>\n")
+        sb.append("      <c r=\"B$summaryRow\" s=\"1\" t=\"inlineStr\"><is><t>QUANTIDADE</t></is></c>\n")
+        sb.append("      <c r=\"C$summaryRow\" s=\"1\" t=\"inlineStr\"><is><t>DETALHAMENTO</t></is></c>\n")
+        sb.append("    </row>\n")
+        summaryRow++
+
+        val clientConclusions = listOf(
+            Triple("Total de cliente", totalClients, "Total geral de clientes listados"),
+            Triple("Total Clientes Novos", totalNewClients, "Primeira visita"),
+            Triple("Total Clientes Recorrentes", totalReturningClients, "Clientes habituais"),
+            Triple("Total em Atendimentos Preferenciais", totalPreferentialClients, "Clientes em atendimentos prioritários")
+        )
+        clientConclusions.forEachIndexed { idx, (label, value, detail) ->
+            val labelStyle = if (idx == 0) " s=\"3\"" else ""
+            sb.append("    <row r=\"$summaryRow\">\n")
+            sb.append("      <c r=\"A$summaryRow\"$labelStyle t=\"inlineStr\"><is><t>${escapeXml(label)}</t></is></c>\n")
+            sb.append("      <c r=\"B$summaryRow\"><v>$value</v></c>\n")
+            sb.append("      <c r=\"C$summaryRow\" t=\"inlineStr\"><is><t>${escapeXml(detail)}</t></is></c>\n")
+            sb.append("    </row>\n")
+            summaryRow++
         }
 
         sb.append("""  </sheetData>
@@ -365,6 +440,35 @@ object XlsxGenerator {
             sb.append("    </row>\n")
             currentRow++
 
+            // Total de atendimentos e tipos (Solo / Dupla / Grupo) do dia
+            sb.append("    <row r=\"$currentRow\">\n")
+            sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>• Total de atendimentos</t></is></c>\n")
+            sb.append("      <c r=\"B$currentRow\"><v>${day.totalAttendances}</v></c>\n")
+            sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Registros de atendimento no dia</t></is></c>\n")
+            sb.append("    </row>\n")
+            currentRow++
+
+            sb.append("    <row r=\"$currentRow\">\n")
+            sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>• Total Solo</t></is></c>\n")
+            sb.append("      <c r=\"B$currentRow\"><v>${day.soloCount}</v></c>\n")
+            sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Atendimentos individuais</t></is></c>\n")
+            sb.append("    </row>\n")
+            currentRow++
+
+            sb.append("    <row r=\"$currentRow\">\n")
+            sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>• Total Dupla</t></is></c>\n")
+            sb.append("      <c r=\"B$currentRow\"><v>${day.duplaCount}</v></c>\n")
+            sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Atendimentos em dupla</t></is></c>\n")
+            sb.append("    </row>\n")
+            currentRow++
+
+            sb.append("    <row r=\"$currentRow\">\n")
+            sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>• Total Grupo</t></is></c>\n")
+            sb.append("      <c r=\"B$currentRow\"><v>${day.grupoCount}</v></c>\n")
+            sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Atendimentos em grupo</t></is></c>\n")
+            sb.append("    </row>\n")
+            currentRow++
+
             // Preferenciais
             sb.append("    <row r=\"$currentRow\">\n")
             sb.append("      <c r=\"A$currentRow\" t=\"inlineStr\"><is><t>• Atendimentos preferenciais</t></is></c>\n")
@@ -410,6 +514,35 @@ object XlsxGenerator {
         sb.append("      <c r=\"A$currentRow\" s=\"3\" t=\"inlineStr\"><is><t>Total de cliente</t></is></c>\n")
         sb.append("      <c r=\"B$currentRow\"><v>${summary.grandTotalClients}</v></c>\n")
         sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Total absoluto de clientes</t></is></c>\n")
+        sb.append("    </row>\n")
+        currentRow++
+
+        // Total de atendimentos geral e tipos (Solo / Dupla / Grupo)
+        sb.append("    <row r=\"$currentRow\">\n")
+        sb.append("      <c r=\"A$currentRow\" s=\"3\" t=\"inlineStr\"><is><t>Total de atendimentos</t></is></c>\n")
+        sb.append("      <c r=\"B$currentRow\"><v>${summary.grandTotalAttendances}</v></c>\n")
+        sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Total absoluto de atendimentos</t></is></c>\n")
+        sb.append("    </row>\n")
+        currentRow++
+
+        sb.append("    <row r=\"$currentRow\">\n")
+        sb.append("      <c r=\"A$currentRow\" s=\"3\" t=\"inlineStr\"><is><t>• Total Solo</t></is></c>\n")
+        sb.append("      <c r=\"B$currentRow\"><v>${summary.grandSoloCount}</v></c>\n")
+        sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Atendimentos individuais</t></is></c>\n")
+        sb.append("    </row>\n")
+        currentRow++
+
+        sb.append("    <row r=\"$currentRow\">\n")
+        sb.append("      <c r=\"A$currentRow\" s=\"3\" t=\"inlineStr\"><is><t>• Total Dupla</t></is></c>\n")
+        sb.append("      <c r=\"B$currentRow\"><v>${summary.grandDuplaCount}</v></c>\n")
+        sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Atendimentos em dupla</t></is></c>\n")
+        sb.append("    </row>\n")
+        currentRow++
+
+        sb.append("    <row r=\"$currentRow\">\n")
+        sb.append("      <c r=\"A$currentRow\" s=\"3\" t=\"inlineStr\"><is><t>• Total Grupo</t></is></c>\n")
+        sb.append("      <c r=\"B$currentRow\"><v>${summary.grandGrupoCount}</v></c>\n")
+        sb.append("      <c r=\"C$currentRow\" t=\"inlineStr\"><is><t>Atendimentos em grupo</t></is></c>\n")
         sb.append("    </row>\n")
         currentRow++
 

@@ -92,6 +92,9 @@ fun InspectionScreen(
     val totalPeople = attendances.sumOf { it.attendance.totalMembers }
     val newCount = attendances.sumOf { it.attendance.newMembers }
     val returningCount = attendances.sumOf { it.attendance.returningMembers }
+    val soloCount = attendances.count { it.attendance.type.name == "SOLO" }
+    val duplaCount = attendances.count { it.attendance.type.name == "DUPLA" }
+    val grupoCount = attendances.count { it.attendance.type.name == "GRUPO" }
 
     Scaffold(
         containerColor = PaoBackground,
@@ -217,6 +220,36 @@ fun InspectionScreen(
                                 label = "Recorrentes",
                                 value = returningCount.toString(),
                                 modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            InspectionStatBox(
+                                label = "Solo",
+                                value = soloCount.toString(),
+                                valueColor = PaoRed,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("inspection_stat_solo")
+                            )
+                            InspectionStatBox(
+                                label = "Dupla",
+                                value = duplaCount.toString(),
+                                valueColor = PaoAnthracite,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("inspection_stat_dupla")
+                            )
+                            InspectionStatBox(
+                                label = "Grupo",
+                                value = grupoCount.toString(),
+                                valueColor = StatusAmber,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("inspection_stat_grupo")
                             )
                         }
                     }

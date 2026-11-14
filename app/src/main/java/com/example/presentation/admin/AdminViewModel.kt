@@ -61,7 +61,10 @@ data class ExportSuccessData(
     val fileName: String,
     val rowCount: Int,
     val totalClients: Int,
-    val periodLabel: String
+    val periodLabel: String,
+    val soloCount: Int = 0,
+    val duplaCount: Int = 0,
+    val grupoCount: Int = 0
 )
 
 data class AdminMetrics(
@@ -69,6 +72,9 @@ data class AdminMetrics(
     val totalNewClients: Int = 0,
     val totalReturningClients: Int = 0,
     val totalAttendances: Int = 0,
+    val soloCount: Int = 0,
+    val duplaCount: Int = 0,
+    val grupoCount: Int = 0,
     val preferentialCount: Int = 0,
     val originDistribution: Map<String, Int> = emptyMap(),
     val hosterPerformance: Map<String, Int> = emptyMap(),
@@ -227,11 +233,19 @@ object AdminDateCalculator {
         var morningCount = 0
         var nightCount = 0
         var prefCount = 0
+        var soloCount = 0
+        var duplaCount = 0
+        var grupoCount = 0
         filtered.forEach { att ->
             val shift = shiftsById[att.shiftId]
             if (shift?.period?.name == "MANHA") morningCount += att.totalMembers
             if (shift?.period?.name == "NOITE") nightCount += att.totalMembers
             if (att.isPreferential) prefCount += 1
+            when (att.type.name) {
+                "SOLO" -> soloCount += 1
+                "DUPLA" -> duplaCount += 1
+                "GRUPO" -> grupoCount += 1
+            }
         }
 
         val openShifts = shifts.filter { it.status.name == "OPEN" }
@@ -242,6 +256,9 @@ object AdminDateCalculator {
             totalNewClients = filtered.sumOf { it.newMembers },
             totalReturningClients = filtered.sumOf { it.returningMembers },
             totalAttendances = filtered.size,
+            soloCount = soloCount,
+            duplaCount = duplaCount,
+            grupoCount = grupoCount,
             preferentialCount = prefCount,
             originDistribution = originDist,
             hosterPerformance = hosterPerf,
@@ -565,7 +582,10 @@ class AdminViewModel(
                             fileName = result.fileName,
                             rowCount = result.rowCount,
                             totalClients = result.totalClients,
-                            periodLabel = periodLabel
+                            periodLabel = periodLabel,
+                            soloCount = result.soloCount,
+                            duplaCount = result.duplaCount,
+                            grupoCount = result.grupoCount
                         )
                     )
                 }

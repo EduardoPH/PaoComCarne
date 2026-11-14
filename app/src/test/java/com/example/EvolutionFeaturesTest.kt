@@ -15,6 +15,7 @@ import com.example.domain.model.ClientClassification
 import com.example.domain.model.Shift
 import com.example.domain.model.ShiftPeriod
 import com.example.domain.model.ShiftStatus
+import com.example.domain.util.XlsxGenerator
 import com.example.presentation.admin.AdminDateCalculator
 import com.example.presentation.admin.AdminFilterState
 import com.example.presentation.admin.DateFilterOption
@@ -26,6 +27,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.util.Calendar
+import java.util.zip.ZipFile
 
 class EvolutionFeaturesTest {
 
@@ -140,6 +142,9 @@ class EvolutionFeaturesTest {
         val (metricsAll, openShifts) = AdminDateCalculator.computeMetrics(shifts, attendances, members, allFilter)
         assertEquals(3, metricsAll.totalPeople)
         assertEquals(2, metricsAll.totalAttendances)
+        assertEquals(1, metricsAll.soloCount)
+        assertEquals(1, metricsAll.duplaCount)
+        assertEquals(0, metricsAll.grupoCount)
         assertEquals(2, metricsAll.totalNewClients)
         assertEquals(1, metricsAll.totalReturningClients)
         assertEquals(2, metricsAll.morningAttendances)
@@ -229,5 +234,76 @@ class EvolutionFeaturesTest {
         assertTrue(iso.endsWith(".321Z"))
         val parsed = com.example.domain.util.DateTimeUtils.fromIsoUtc(iso)
         assertEquals(original, parsed)
+    }
+
+    @Test
+    fun testXlsxGeneratorIncludesConclusionTotalsOnAllSheets() {
+        val tmp = File.createTempFile("pao_report_test", ".xlsx")
+        val attendanceRows = listOf(
+            XlsxGenerator.AttendanceRow("a1", "14/11/2026 11:00", "Manhã", "Ana", "SOLO", "Não", 1, 1, 0),
+            XlsxGenerator.AttendanceRow("a2", "14/11/2026 12:00", "Manhã", "Ana", "DUPLA", "Sim", 2, 1, 1),
+            XlsxGenerator.AttendanceRow("a3", "14/11/2026 20:00", "Noite", "Bruno", "GRUPO", "Não", 4, 2, 2)
+        )
+        val clientRows = listOf(
+            XlsxGenerator.ClientRow("a1", "Ana", 1, "Novo", "Instagram", "Não"),
+            XlsxGenerator.ClientRow("a2", "Ana", 1, "Novo", "TikTok", "Sim"),
+            XlsxGenerator.ClientRow("a2", "Ana", 2, "Recorrente", "—", "Sim"),
+            XlsxGenerator.ClientRow("a3", "Bruno", 1, "Novo", "Google", "Não"),
+            XlsxGenerator.ClientRow("a3", "Bruno", 2, "Novo", "Indicação", "Não"),
+            XlsxGenerator.ClientRow("a3", "Bruno", 3, "Recorrente", "—", "Não"),
+            XlsxGenerator.ClientRow("a3", "Bruno", 4, "Recorrente", "—", "Não")
+        )
+        val summary = XlsxGenerator.ReportConsolidatedSummary(
+            dailySummaries = listOf(
+                XlsxGenerator.DailySummary(
+                    dateLabel = "14/11/2026",
+                    totalClients = 7,
+                    morningClients = 3,
+                    nightClients = 4,
+                    newClients = 4,
+                    returningClients = 3,
+                    preferentialCount = 1,
+                    originsBreakdown = mapOf("Instagram" to 1, "TikTok" to 1, "Google" to 1, "Indicação" to 1),
+                    totalAttendances = 3,
+                    soloCount = 1,
+                    duplaCount = 1,
+                    grupoCount = 1
+                )
+            ),
+            grandTotalClients = 7,
+            grandMorningClients = 3,
+            grandNightClients = 4,
+            grandNewClients = 4,
+            grandReturningClients = 3,
+            grandPreferentialCount = 1,
+            grandOriginsBreakdown = mapOf("Instagram" to 1, "TikTok" to 1, "Google" to 1, "Indicação" to 1),
+            grandTotalAttendances = 3,
+            grandSoloCount = 1,
+            grandDuplaCount = 1,
+            grandGrupoCount = 1
+        )
+
+        XlsxGenerator.generateWorkbook(tmp, attendanceRows, clientRows, summary)
+
+        ZipFile(tmp).use { zip ->
+            val sheet1 = zip.getInputStream(zip.getEntry("xl/worksheets/sheet1.xml")).bufferedReader().readText()
+            assertTrue(sheet1.contains("CONCLUSÃO — TOTAIS DE ATENDIMENTOS"))
+            assertTrue(sheet1.contains("Total Solo"))
+            assertTrue(sheet1.contains("Total Dupla"))
+            assertTrue(sheet1.contains("Total Grupo"))
+            assertTrue(sheet1.contains("Total de Atendimentos"))
+
+            val sheet2 = zip.getInputStream(zip.getEntry("xl/worksheets/sheet2.xml")).bufferedReader().readText()
+            assertTrue(sheet2.contains("CONCLUSÃO — TOTAIS DE CLIENTES"))
+            assertTrue(sheet2.contains("Total de cliente"))
+            assertTrue(sheet2.contains("<v>7</v>"))
+
+            val sheet3 = zip.getInputStream(zip.getEntry("xl/worksheets/sheet3.xml")).bufferedReader().readText()
+            assertTrue(sheet3.contains("Total de atendimentos"))
+            assertTrue(sheet3.contains("• Total Solo"))
+            assertTrue(sheet3.contains("• Total Dupla"))
+            assertTrue(sheet3.contains("• Total Grupo"))
+        }
+        tmp.delete()
     }
 }
