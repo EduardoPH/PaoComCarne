@@ -233,6 +233,10 @@ jobs:
               "1.3": (
                   "• Nova opção de origem 'Gringo' adicionada ao lado das demais origens (Instagram, TikTok, etc.) no registro, correção, filtros e relatórios.",
                   "Atualização obrigatória com inclusão da nova opção de origem 'Gringo'."
+              ),
+              "1.4": (
+                  "• Correção do erro 409 ao remover Hoster que já possui histórico de turnos ou atendimentos: agora o hoster é desativado com segurança preservando os registros históricos.",
+                  "Atualização obrigatória corrigindo a remoção/desativação de Hosters com histórico."
               )
           }
           changelog_text, reason_text = release_notes.get(

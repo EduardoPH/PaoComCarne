@@ -298,7 +298,12 @@ class AuthRepository(
         if (id == "admin") {
             return@withContext Result.failure(Exception("Não é permitido excluir o usuário Administrador."))
         }
-        hosterDao.deleteHosterById(id)
+        val existing = hosterDao.getHosterById(id)
+        if (existing != null) {
+            hosterDao.insertOrUpdateHoster(existing.copy(active = false))
+        } else {
+            hosterDao.deleteHosterById(id)
+        }
 
         syncQueueDao.enqueue(
             SyncQueueEntity(
@@ -444,6 +449,19 @@ class AuthRepository(
                 userName = hosterId
             )
             return@withContext Result.failure(Exception("Hoster não encontrado."))
+        }
+
+        if (!entity.active) {
+            systemLogRepository?.recordLog(
+                action = SystemLogActions.LOGIN_FAILURE,
+                entityType = "AUTH",
+                entityId = entity.id,
+                result = LogResult.FAILURE,
+                description = "Tentativa de login com hoster desativado (${entity.name}).",
+                userId = entity.id,
+                userName = entity.name
+            )
+            return@withContext Result.failure(Exception("Este hoster foi removido ou desativado."))
         }
 
         if (!entity.isActivated) {

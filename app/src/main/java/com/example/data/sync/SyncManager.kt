@@ -272,9 +272,16 @@ class SyncManager(private val context: Context) {
                     if (remoteHosters.isNotEmpty()) {
                         val validSalt = "c6bca501f28b49e6"
                         val validHash = "e1ef788d028b746c3594f232fd4a5213c3901c45acfc5ff3f552119d89d554f9"
+                        val remoteIds = remoteHosters.map { it.id }.toSet()
 
-                        val entities = remoteHosters.map { dto ->
+                        val entities = remoteHosters.mapNotNull { dto ->
                             val local = database.hosterDao().getHosterById(dto.id)
+                            val hasPendingInQueue = database.syncQueueDao().countPendingForEntity(dto.id) > 0
+                            if (local != null && hasPendingInQueue) {
+                                // Keep pending local edits/deactivation until queue finishes
+                                return@mapNotNull null
+                            }
+
                             val isAdmin = dto.isAdmin || (dto.id == "admin") || (local?.isAdmin == true)
                             val pinHash = if (dto.id == "admin") validHash else (dto.pinHash ?: local?.pinHash ?: "")
                             val pinSalt = if (dto.id == "admin") validSalt else (dto.pinSalt ?: local?.pinSalt ?: "")
@@ -292,8 +299,21 @@ class SyncManager(private val context: Context) {
                                 createdAt = System.currentTimeMillis()
                             )
                         }
-                        database.hosterDao().insertOrUpdateHosters(entities)
-                        log("Hosters sincronizados do Supabase (${entities.size} membros da equipe).")
+                        if (entities.isNotEmpty()) {
+                            database.hosterDao().insertOrUpdateHosters(entities)
+                        }
+
+                        // Deactivate locally any non-admin hoster removed/deactivated on server
+                        val localActives = database.hosterDao().getAllActiveHosters()
+                        for (local in localActives) {
+                            if (local.id != "admin" && local.id !in remoteIds) {
+                                val hasPendingInQueue = database.syncQueueDao().countPendingForEntity(local.id) > 0
+                                if (!hasPendingInQueue) {
+                                    database.hosterDao().insertOrUpdateHoster(local.copy(active = false))
+                                }
+                            }
+                        }
+                        log("Hosters sincronizados do Supabase (${remoteHosters.size} membros ativos).")
                     }
                 }
             } catch (e: Exception) {
@@ -826,7 +846,16 @@ class SyncManager(private val context: Context) {
             }
             "HOSTER_DELETE" -> {
                 val res = service.deleteHoster("eq.${op.entityId}")
-                Pair(res.isSuccessful, if (res.isSuccessful) null else extractError(res))
+                when {
+                    res.isSuccessful || res.code() == 404 -> Pair(true, null)
+                    res.code() == 409 -> {
+                        // Hoster already has shifts/attendances/audits in Supabase (FK constraint 23503):
+                        // deactivate (active = false) instead of hard delete to preserve historical records.
+                        val patchRes = service.updateHoster("eq.${op.entityId}", mapOf("active" to false))
+                        Pair(patchRes.isSuccessful, if (patchRes.isSuccessful) null else extractError(patchRes))
+                    }
+                    else -> Pair(false, extractError(res))
+                }
             }
             "SYSTEM_LOG" -> {
                 val adapter = moshi.adapter(SupabaseSystemLogDto::class.java)
