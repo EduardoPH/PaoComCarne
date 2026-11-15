@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS public.attendance_members (
     classification TEXT NOT NULL CHECK (classification IN ('NOVO', 'RECORRENTE')),
     origin TEXT CHECK (
         origin IS NULL OR 
-        origin IN ('Instagram', 'TikTok', 'Indicação', 'iFood', 'Google', 'Já foi na antiga loja')
+        origin IN ('Instagram', 'TikTok', 'Indicação', 'iFood', 'Google', 'Já foi na antiga loja', 'Gringo')
     ),
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     CONSTRAINT check_new_has_origin CHECK (classification != 'NOVO' OR origin IS NOT NULL)

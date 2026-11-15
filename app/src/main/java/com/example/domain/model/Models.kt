@@ -28,7 +28,8 @@ object ClientOrigins {
         "Indicação",
         "iFood",
         "Google",
-        "Já foi na antiga loja"
+        "Já foi na antiga loja",
+        "Gringo"
     )
 }
 

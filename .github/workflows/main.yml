@@ -229,6 +229,10 @@ jobs:
                   "• Tela inicial de login passa a exibir automaticamente a versão atual do aplicativo.\n"
                   "• Nova tela Meu Perfil acessível pelo logo/nome do hoster no topo (com indicação clicável) para alterar nome, alterar senha e Trocar de Hoster / Sair.",
                   "Atualização obrigatória com novas ações rápidas de classificação, exibição dinâmica da versão e nova tela de Perfil do hoster."
+              ),
+              "1.3": (
+                  "• Nova opção de origem 'Gringo' adicionada ao lado das demais origens (Instagram, TikTok, etc.) no registro, correção, filtros e relatórios.",
+                  "Atualização obrigatória com inclusão da nova opção de origem 'Gringo'."
               )
           }
           changelog_text, reason_text = release_notes.get(

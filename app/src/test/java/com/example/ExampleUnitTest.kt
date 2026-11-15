@@ -34,13 +34,14 @@ class ExampleUnitTest {
         assertEquals(2, AttendanceType.DUPLA.fixedMembers)
         assertEquals(null, AttendanceType.GRUPO.fixedMembers)
 
-        assertEquals(6, ClientOrigins.ALL.size)
+        assertEquals(7, ClientOrigins.ALL.size)
         assertTrue(ClientOrigins.ALL.contains("Instagram"))
         assertTrue(ClientOrigins.ALL.contains("TikTok"))
         assertTrue(ClientOrigins.ALL.contains("Indicação"))
         assertTrue(ClientOrigins.ALL.contains("iFood"))
         assertTrue(ClientOrigins.ALL.contains("Google"))
         assertTrue(ClientOrigins.ALL.contains("Já foi na antiga loja"))
+        assertTrue(ClientOrigins.ALL.contains("Gringo"))
     }
 
     @Test

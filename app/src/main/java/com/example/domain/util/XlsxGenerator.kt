@@ -388,7 +388,7 @@ object XlsxGenerator {
 """)
 
         var currentRow = 1
-        val standardOrigins = listOf("Instagram", "TikTok", "Indicação", "Google", "iFood", "Já foi na antiga loja")
+        val standardOrigins = listOf("Instagram", "TikTok", "Indicação", "Google", "iFood", "Já foi na antiga loja", "Gringo")
 
         // 1. Cada dia individualmente
         summary.dailySummaries.forEach { day ->
