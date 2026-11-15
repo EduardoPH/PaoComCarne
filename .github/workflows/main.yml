@@ -57,6 +57,7 @@ jobs:
     needs: check_version
     if: needs.check_version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
+    environment: DEBUG_KEYSTORE_BASE64
 
     env:
       JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
