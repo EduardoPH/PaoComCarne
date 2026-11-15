@@ -519,7 +519,7 @@ fun LoginScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "Operação Interna • Versão 1.0",
+                text = "Operação Interna • Versão ${com.example.BuildConfig.VERSION_NAME}",
                 fontSize = 12.sp,
                 color = PaoAnthraciteMuted
             )

@@ -326,12 +326,25 @@ fun CorrectionDialog(
                                     text = "Indicação p/ novos",
                                     onClick = {
                                         for (i in 0 until membersDraft.size) {
-                                            if (membersDraft[i].classification == ClientClassification.NOVO) {
-                                                membersDraft[i] = membersDraft[i].copy(origin = "Indicação")
-                                            }
+                                            membersDraft[i] = membersDraft[i].copy(
+                                                classification = ClientClassification.NOVO,
+                                                origin = "Indicação"
+                                            )
                                         }
                                     },
                                     testTag = "correction_quick_origin_indicacao"
+                                )
+                                QuickActionChip(
+                                    text = "Instagram p/ novos",
+                                    onClick = {
+                                        for (i in 0 until membersDraft.size) {
+                                            membersDraft[i] = membersDraft[i].copy(
+                                                classification = ClientClassification.NOVO,
+                                                origin = "Instagram"
+                                            )
+                                        }
+                                    },
+                                    testTag = "correction_quick_origin_instagram"
                                 )
                                 QuickActionChip(
                                     text = "Todos Recorrentes",

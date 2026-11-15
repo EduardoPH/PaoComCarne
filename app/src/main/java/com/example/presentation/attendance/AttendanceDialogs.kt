@@ -388,20 +388,35 @@ fun NewAttendanceDialog(
                                             testTag = "quick_mark_all_new"
                                         )
 
-                                        // 2. Indicação para novos
+                                        // 2. Indicação para novos (converte inclusive Recorrentes para Novo + Indicação)
                                         QuickActionChip(
                                             text = "Indicação p/ novos",
                                             onClick = {
                                                 for (i in 0 until membersDraft.size) {
-                                                    if (membersDraft[i].classification == ClientClassification.NOVO) {
-                                                        membersDraft[i] = membersDraft[i].copy(origin = "Indicação")
-                                                    }
+                                                    membersDraft[i] = membersDraft[i].copy(
+                                                        classification = ClientClassification.NOVO,
+                                                        origin = "Indicação"
+                                                    )
                                                 }
                                             },
                                             testTag = "quick_origin_indicacao_all_new"
                                         )
 
-                                        // 3. Todos Recorrentes
+                                        // 3. Instagram para novos (converte inclusive Recorrentes para Novo + Instagram)
+                                        QuickActionChip(
+                                            text = "Instagram p/ novos",
+                                            onClick = {
+                                                for (i in 0 until membersDraft.size) {
+                                                    membersDraft[i] = membersDraft[i].copy(
+                                                        classification = ClientClassification.NOVO,
+                                                        origin = "Instagram"
+                                                    )
+                                                }
+                                            },
+                                            testTag = "quick_origin_instagram_all_new"
+                                        )
+
+                                        // 4. Todos Recorrentes
                                         QuickActionChip(
                                             text = "Todos Recorrentes",
                                             onClick = {

@@ -14,8 +14,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
@@ -76,8 +77,8 @@ import androidx.compose.foundation.verticalScroll
 @Composable
 fun ShiftScreen(
     viewModel: ReceptionViewModel,
-    onLogout: () -> Unit,
-    onShiftClosed: () -> Unit = onLogout
+    onShiftClosed: () -> Unit,
+    onNavigateToProfile: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val hoster by viewModel.currentHoster.collectAsState()
@@ -155,11 +156,14 @@ fun ShiftScreen(
 
             HorizontalDivider(color = PaoBorderLight, modifier = Modifier.padding(bottom = 16.dp))
 
-            // Hoster Info Card
+            // Hoster Info Card (also opens Profile)
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, PaoBorder, RoundedCornerShape(16.dp)),
+                    .clip(RoundedCornerShape(16.dp))
+                    .border(1.dp, PaoBorder, RoundedCornerShape(16.dp))
+                    .clickable { onNavigateToProfile() }
+                    .testTag("shift_hoster_profile_card"),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 shape = RoundedCornerShape(16.dp)
             ) {
@@ -191,11 +195,18 @@ fun ShiftScreen(
                             color = PaoAnthracite
                         )
                         Text(
-                            text = "Hoster em atividade neste dispositivo",
+                            text = "Toque para abrir Perfil e sair",
                             fontSize = 12.sp,
-                            color = PaoAnthraciteMuted
+                            color = PaoRed,
+                            fontWeight = FontWeight.Medium
                         )
                     }
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = "Abrir perfil",
+                        tint = PaoRed,
+                        modifier = Modifier.size(22.dp)
+                    )
                 }
             }
 
@@ -340,24 +351,6 @@ fun ShiftScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Logout action (trocar hoster)
-            OutlinedButton(
-                onClick = onLogout,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .padding(bottom = 12.dp)
-                    .testTag("btn_logout"),
-                shape = RoundedCornerShape(12.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, PaoBorder),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = PaoAnthraciteMuted)
-            ) {
-                Icon(imageVector = Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(text = "Trocar de Hoster / Sair", fontSize = 13.sp)
-            }
         }
     }
 

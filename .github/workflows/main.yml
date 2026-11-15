@@ -222,6 +222,22 @@ jobs:
               print("Cleaned same version_code:", r.status)
 
           # 4. Insert active mandatory release
+          release_notes = {
+              "1.2": (
+                  "• Ações rápidas (Novo Atendimento e Correção): 'Indicação p/ novos' agora converte integrantes Recorrentes para Novo com Indicação em 1 clique.\n"
+                  "• Nova ação rápida 'Instagram p/ novos': converte todos os integrantes para Novo e define Instagram automaticamente.\n"
+                  "• Tela inicial de login passa a exibir automaticamente a versão atual do aplicativo.\n"
+                  "• Nova tela Meu Perfil acessível pelo logo/nome do hoster no topo (com indicação clicável) para alterar nome, alterar senha e Trocar de Hoster / Sair.",
+                  "Atualização obrigatória com novas ações rápidas de classificação, exibição dinâmica da versão e nova tela de Perfil do hoster."
+              )
+          }
+          changelog_text, reason_text = release_notes.get(
+              version_name,
+              (
+                  f"Atualização v{version_name} (código {version_code}) publicada automaticamente.",
+                  "Atualização obrigatória para manter compatibilidade e integridade dos dados."
+              )
+          )
           payload = {
               "version_name": version_name,
               "version_code": version_code,
@@ -229,8 +245,8 @@ jobs:
               "mandatory": True,
               "apk_path": apk_path,
               "sha256": sha256,
-              "changelog": f"Atualização v{version_name} (código {version_code}) publicada automaticamente.",
-              "release_reason": "Atualização obrigatória para manter compatibilidade e integridade dos dados.",
+              "changelog": changelog_text,
+              "release_reason": reason_text,
               "active": True,
           }
           ins_req = urllib.request.Request(

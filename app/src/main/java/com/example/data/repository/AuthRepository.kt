@@ -167,11 +167,20 @@ class AuthRepository(
     }
 
     suspend fun updateHosterName(id: String, newName: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val trimmed = newName.trim()
+        if (trimmed.isBlank()) {
+            return@withContext Result.failure(Exception("O nome não pode ficar em branco."))
+        }
         val existing = hosterDao.getHosterById(id) ?: return@withContext Result.failure(Exception("Hoster não encontrado"))
-        val updated = existing.copy(name = newName.trim())
+        val updated = existing.copy(name = trimmed)
         hosterDao.insertOrUpdateHoster(updated)
 
-        val map = mapOf("name" to newName.trim())
+        val current = _currentHoster.value
+        if (current != null && current.id == id) {
+            saveSession(current.copy(name = trimmed))
+        }
+
+        val map = mapOf("name" to trimmed)
         val json = SupabaseClient.moshi.adapter(Map::class.java).toJson(map)
         syncQueueDao.enqueue(
             SyncQueueEntity(
@@ -181,6 +190,75 @@ class AuthRepository(
                 payloadJson = json,
                 status = "PENDING"
             )
+        )
+        systemLogRepository?.recordLog(
+            action = SystemLogActions.PROFILE_NAME_UPDATED,
+            entityType = "HOSTER",
+            entityId = id,
+            result = LogResult.SUCCESS,
+            description = "Nome do hoster atualizado de \"${existing.name}\" para \"$trimmed\".",
+            userId = current?.id ?: id,
+            userName = trimmed
+        )
+        syncManager.triggerSync()
+        Result.success(Unit)
+    }
+
+    suspend fun changeOwnPassword(id: String, currentPin: String, newPin: String): Result<Unit> = withContext(Dispatchers.IO) {
+        if (currentPin.isBlank()) {
+            return@withContext Result.failure(Exception("Informe a sua senha atual."))
+        }
+        if (newPin.length < 4) {
+            return@withContext Result.failure(Exception("A nova senha deve ter no mínimo 4 caracteres."))
+        }
+        val existing = hosterDao.getHosterById(id)
+            ?: return@withContext Result.failure(Exception("Hoster não encontrado."))
+
+        if (existing.pinSalt.isBlank() || !SecurityUtils.verifyPassword(currentPin, existing.pinSalt, existing.pinHash)) {
+            systemLogRepository?.recordLog(
+                action = SystemLogActions.PROFILE_PASSWORD_UPDATED,
+                entityType = "HOSTER",
+                entityId = id,
+                result = LogResult.FAILURE,
+                description = "Tentativa de alteração de senha recusada por senha atual incorreta (${existing.name}).",
+                userId = id,
+                userName = existing.name
+            )
+            return@withContext Result.failure(Exception("Senha atual incorreta."))
+        }
+
+        val salt = SecurityUtils.generateSalt()
+        val hash = SecurityUtils.hashPassword(newPin, salt)
+        val updated = existing.copy(
+            pinSalt = salt,
+            pinHash = hash,
+            isActivated = true
+        )
+        hosterDao.insertOrUpdateHoster(updated)
+
+        val map = mapOf(
+            "pin_salt" to salt,
+            "pin_hash" to hash,
+            "is_activated" to true
+        )
+        val json = SupabaseClient.moshi.adapter(Map::class.java).toJson(map)
+        syncQueueDao.enqueue(
+            SyncQueueEntity(
+                entityType = "HOSTER_UPDATE",
+                entityId = id,
+                operation = "UPDATE",
+                payloadJson = json,
+                status = "PENDING"
+            )
+        )
+        systemLogRepository?.recordLog(
+            action = SystemLogActions.PROFILE_PASSWORD_UPDATED,
+            entityType = "HOSTER",
+            entityId = id,
+            result = LogResult.SUCCESS,
+            description = "Senha de acesso alterada pelo próprio hoster (${existing.name}).",
+            userId = id,
+            userName = existing.name
         )
         syncManager.triggerSync()
         Result.success(Unit)

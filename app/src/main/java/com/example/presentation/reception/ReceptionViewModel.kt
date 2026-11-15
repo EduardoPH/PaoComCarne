@@ -243,4 +243,14 @@ class ReceptionViewModel(
             }
         }
     }
+
+    suspend fun updateOwnName(newName: String): Result<Unit> {
+        val hoster = currentHoster.value ?: return Result.failure(Exception("Nenhum hoster conectado."))
+        return authRepository.updateHosterName(hoster.id, newName)
+    }
+
+    suspend fun changeOwnPassword(currentPin: String, newPin: String): Result<Unit> {
+        val hoster = currentHoster.value ?: return Result.failure(Exception("Nenhum hoster conectado."))
+        return authRepository.changeOwnPassword(hoster.id, currentPin, newPin)
+    }
 }

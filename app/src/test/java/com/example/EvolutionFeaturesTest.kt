@@ -306,4 +306,17 @@ class EvolutionFeaturesTest {
         }
         tmp.delete()
     }
+
+    @Test
+    fun testVersionConfigAndProfilePasswordHashing() {
+        assertTrue(BuildConfig.VERSION_NAME.isNotBlank())
+        assertTrue(BuildConfig.VERSION_CODE >= 3)
+        assertEquals("PERFIL_NOME_ALTERADO", com.example.domain.model.SystemLogActions.PROFILE_NAME_UPDATED)
+        assertEquals("PERFIL_SENHA_ALTERADA", com.example.domain.model.SystemLogActions.PROFILE_PASSWORD_UPDATED)
+
+        val salt = com.example.domain.util.SecurityUtils.generateSalt()
+        val hash = com.example.domain.util.SecurityUtils.hashPassword("1234", salt)
+        assertTrue(com.example.domain.util.SecurityUtils.verifyPassword("1234", salt, hash))
+        assertFalse(com.example.domain.util.SecurityUtils.verifyPassword("0000", salt, hash))
+    }
 }

@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.text.style.TextOverflow
 import com.example.domain.model.SyncState
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -92,6 +94,7 @@ fun ReceptionScreen(
     onNavigateToInspection: () -> Unit,
     onNavigateToAdmin: () -> Unit,
     onNavigateToShift: () -> Unit,
+    onNavigateToProfile: () -> Unit,
     onShiftClosed: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -122,54 +125,87 @@ fun ReceptionScreen(
                 .padding(innerPadding)
                 .padding(horizontal = 20.dp)
         ) {
-            // Header Bar: Hoster, Period, Opening Time & Sync Pill
+            // Header Bar: Clickable Hoster Profile/Logo Block & Sync Pill
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 16.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { onNavigateToProfile() }
+                        .testTag("btn_header_profile"),
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color.White,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, PaoBorder),
+                    shadowElevation = 1.dp
                 ) {
-                    Surface(
-                        modifier = Modifier.size(38.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        color = PaoRed
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        androidx.compose.foundation.Image(
-                            painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.logo_pao_com_carne),
-                            contentDescription = "Pão com Carne",
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(3.dp),
-                            contentScale = androidx.compose.ui.layout.ContentScale.Fit
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = hoster?.name ?: "Recepção",
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = PaoAnthracite
-                        )
-                        if (shift != null) {
-                            Text(
-                                text = "Turno ${shift?.period?.displayName} • Aberto às ${DateTimeUtils.formatTime(shift?.openedAt ?: 0)}",
-                                fontSize = 12.sp,
-                                color = PaoAnthraciteMuted
-                            )
-                        } else {
-                            Text(
-                                text = "Nenhum turno em andamento",
-                                fontSize = 12.sp,
-                                color = StatusAmber,
-                                fontWeight = FontWeight.SemiBold
+                        Surface(
+                            modifier = Modifier.size(38.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            color = PaoRed
+                        ) {
+                            androidx.compose.foundation.Image(
+                                painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.logo_pao_com_carne),
+                                contentDescription = "Abrir perfil de Pão com Carne",
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(3.dp),
+                                contentScale = androidx.compose.ui.layout.ContentScale.Fit
                             )
                         }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = hoster?.name ?: "Recepção",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = PaoAnthracite,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (shift != null) {
+                                Text(
+                                    text = "Turno ${shift?.period?.displayName} • ${DateTimeUtils.formatTime(shift?.openedAt ?: 0)}",
+                                    fontSize = 11.sp,
+                                    color = PaoAnthraciteMuted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            } else {
+                                Text(
+                                    text = "Nenhum turno em andamento",
+                                    fontSize = 11.sp,
+                                    color = StatusAmber,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Text(
+                                text = "Perfil • Editar ou sair",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = PaoRed,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = "Acessar perfil e sair",
+                            tint = PaoRed,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
 

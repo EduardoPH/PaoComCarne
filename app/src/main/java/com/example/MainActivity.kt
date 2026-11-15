@@ -68,6 +68,7 @@ import com.example.presentation.components.rememberReducedMotion
 import com.example.presentation.inspection.InspectionScreen
 import com.example.presentation.login.LoginScreen
 import com.example.presentation.login.LoginViewModel
+import com.example.presentation.profile.ProfileScreen
 import com.example.presentation.reception.ReceptionScreen
 import com.example.presentation.reception.ReceptionViewModel
 import com.example.presentation.shift.ShiftScreen
@@ -223,6 +224,7 @@ fun MainAppScaffold(
     onLogout: () -> Unit
 ) {
     var selectedTab by remember { mutableStateOf(AppTab.RECEPCAO) }
+    var showProfileScreen by remember { mutableStateOf(false) }
     var showConfigDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -239,8 +241,21 @@ fun MainAppScaffold(
         }
     }
 
-    BackHandler(enabled = selectedTab != AppTab.RECEPCAO) {
-        selectedTab = AppTab.RECEPCAO
+    BackHandler(enabled = showProfileScreen || selectedTab != AppTab.RECEPCAO) {
+        if (showProfileScreen) {
+            showProfileScreen = false
+        } else {
+            selectedTab = AppTab.RECEPCAO
+        }
+    }
+
+    if (showProfileScreen) {
+        ProfileScreen(
+            viewModel = receptionViewModel,
+            onBack = { showProfileScreen = false },
+            onLogout = onLogout
+        )
+        return
     }
 
     Scaffold(
@@ -313,6 +328,7 @@ fun MainAppScaffold(
                             onNavigateToInspection = { selectedTab = AppTab.INSPECAO },
                             onNavigateToAdmin = { selectedTab = AppTab.ADMINISTRACAO },
                             onNavigateToShift = { selectedTab = AppTab.TURNO },
+                            onNavigateToProfile = { showProfileScreen = true },
                             onShiftClosed = handleShiftClosed
                         )
                         AppTab.INSPECAO -> InspectionScreen(
@@ -325,8 +341,8 @@ fun MainAppScaffold(
                         )
                         AppTab.TURNO -> ShiftScreen(
                             viewModel = receptionViewModel,
-                            onLogout = onLogout,
-                            onShiftClosed = handleShiftClosed
+                            onShiftClosed = handleShiftClosed,
+                            onNavigateToProfile = { showProfileScreen = true }
                         )
                     }
                 }
