@@ -237,6 +237,11 @@ jobs:
               "1.4": (
                   "• Correção do erro 409 ao remover Hoster que já possui histórico de turnos ou atendimentos: agora o hoster é desativado com segurança preservando os registros históricos.",
                   "Atualização obrigatória corrigindo a remoção/desativação de Hosters com histórico."
+              ),
+              "1.5": (
+                  "• Correção da sincronização de origens dos clientes novos após ultrapassar 1.000 registros: paginação completa aplicada em integrantes, atendimentos, turnos e fila.\n"
+                  "• Reconexão automática da sincronização e do tempo real ao sair e voltar ao aplicativo, sem precisar fechar o app ou reiniciar Wi-Fi/dados móveis.",
+                  "Atualização obrigatória corrigindo a exibição completa das origens e a reconexão automática ao retornar ao aplicativo."
               )
           }
           changelog_text, reason_text = release_notes.get(

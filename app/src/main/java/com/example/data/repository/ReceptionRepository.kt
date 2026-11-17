@@ -749,8 +749,8 @@ class ReceptionRepository(
     }
 
     fun getAllMembersFlow(): Flow<List<AttendanceMember>> {
-        return attendanceDao.getAllAttendancesFlow().map { _ ->
-            memberDao.getAllMembers().map { it.toDomain() }
+        return memberDao.getAllMembersFlow().map { members ->
+            members.map { it.toDomain() }
         }
     }
 

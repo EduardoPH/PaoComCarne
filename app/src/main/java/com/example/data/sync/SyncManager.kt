@@ -92,8 +92,10 @@ class SyncManager(private val context: Context) {
                         fetchAttendancesFromRemote()
                         fetchAttendanceMembersFromRemote()
                     }
+                    "attendance_members" -> fetchAttendanceMembersFromRemote()
                     "shifts" -> fetchShiftsFromRemote()
                     "queue_events" -> fetchQueueEventsFromRemote()
+                    "hosters" -> fetchHostersFromRemote()
                     "system_logs" -> fetchSystemLogsFromRemote()
                 }
                 if (table != "system_logs") {
@@ -147,17 +149,23 @@ class SyncManager(private val context: Context) {
         if (isError) Log.e("SyncManager", message) else Log.i("SyncManager", message)
     }
 
-    private fun registerNetworkCallback() {
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
+    private fun hasCurrentInternet(): Boolean {
+        return try {
+            val activeNetwork = connectivityManager.activeNetwork ?: return false
+            val caps = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        } catch (_: Exception) {
+            false
+        }
+    }
 
-        connectivityManager.registerNetworkCallback(request, object : ConnectivityManager.NetworkCallback() {
+    private fun registerNetworkCallback() {
+        val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 val wasOffline = !isOnline
                 isOnline = true
                 log("Rede online restabelecida. Disparando sincronização...")
-                realtimeClient.start()
+                realtimeClient.ensureConnected()
                 scope.launch {
                     if (wasOffline) {
                         systemLogRepository?.recordLog(
@@ -173,7 +181,20 @@ class SyncManager(private val context: Context) {
                 }
             }
 
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                val hasInternet = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                if (hasInternet && !isOnline) {
+                    onAvailable(network)
+                }
+            }
+
             override fun onLost(network: Network) {
+                val stillHasInternet = hasCurrentInternet()
+                if (stillHasInternet) {
+                    isOnline = true
+                    realtimeClient.ensureConnected()
+                    return
+                }
                 isOnline = false
                 realtimeClient.stop()
                 log("Rede perdida. Dados mantidos em cache local.", isError = true)
@@ -183,13 +204,50 @@ class SyncManager(private val context: Context) {
                     _syncState.value = if (count > 0) SyncState.PENDENTE else SyncState.OFFLINE
                 }
             }
-        })
+        }
+
+        try {
+            connectivityManager.registerDefaultNetworkCallback(callback)
+        } catch (_: Exception) {
+            val request = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            connectivityManager.registerNetworkCallback(request, callback)
+        }
+    }
+
+    fun onAppForegrounded() {
+        val onlineNow = hasCurrentInternet()
+        val wasOffline = !isOnline
+        isOnline = onlineNow
+        if (onlineNow) {
+            if (wasOffline) {
+                log("Conexão ativa detectada ao retornar ao app. Reconectando automaticamente...")
+            }
+            realtimeClient.ensureConnected()
+            scope.launch {
+                val count = database.syncQueueDao().getPendingCount()
+                _pendingCount.value = count
+                _syncState.value = if (count > 0) SyncState.PENDENTE else SyncState.SINCRONIZADO
+                onVersionCheckRequested?.invoke(true)
+                syncPendingQueue(pullAfter = true)
+            }
+        } else {
+            realtimeClient.stop()
+            scope.launch {
+                val count = database.syncQueueDao().getPendingCount()
+                _pendingCount.value = count
+                _syncState.value = if (count > 0) SyncState.PENDENTE else SyncState.OFFLINE
+            }
+        }
+    }
+
+    fun onAppBackgrounded() {
+        realtimeClient.stop()
     }
 
     private suspend fun checkInitialNetwork() {
-        val activeNetwork = connectivityManager.activeNetwork
-        val caps = connectivityManager.getNetworkCapabilities(activeNetwork)
-        isOnline = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        isOnline = hasCurrentInternet()
         val count = database.syncQueueDao().getPendingCount()
         _pendingCount.value = count
         _syncState.value = when {
@@ -322,39 +380,57 @@ class SyncManager(private val context: Context) {
         }
     }
 
+    private suspend fun <T> fetchAllPaginated(
+        pageSize: Int = 500,
+        maxPages: Int = 100,
+        fetchPage: suspend (limit: Int, offset: Int) -> retrofit2.Response<List<T>>
+    ): List<T> {
+        val all = mutableListOf<T>()
+        var offset = 0
+        for (page in 0 until maxPages) {
+            val response = fetchPage(pageSize, offset)
+            if (!response.isSuccessful) break
+            val batch = response.body().orEmpty()
+            if (batch.isEmpty()) break
+            all.addAll(batch)
+            if (batch.size < pageSize) break
+            offset += batch.size
+        }
+        return all
+    }
+
     suspend fun fetchShiftsFromRemote() {
         if (!isOnline) return
         withContext(Dispatchers.IO) {
             try {
                 val service = SupabaseClient.getService(context)
-                val response = service.getShifts()
-                if (response.isSuccessful) {
-                    val remoteShifts = response.body().orEmpty()
-                    if (remoteShifts.isNotEmpty()) {
-                        val entities = remoteShifts.mapNotNull { dto ->
-                            val hasPendingInQueue = database.syncQueueDao().countPendingForEntity(dto.id) > 0
-                            if (hasPendingInQueue) {
-                                // Keep pending local shift untouched until local push completes
-                                return@mapNotNull null
-                            }
-                            ShiftEntity(
-                                id = dto.id,
-                                hosterId = dto.hosterId,
-                                hosterName = dto.hosterName,
-                                period = dto.period,
-                                openedAt = DateTimeUtils.fromIsoUtc(dto.openedAt),
-                                closedAt = dto.closedAt?.let { DateTimeUtils.fromIsoUtc(it) },
-                                status = dto.status,
-                                deviceCreatedAt = DateTimeUtils.fromIsoUtc(dto.deviceCreatedAt),
-                                syncedAt = System.currentTimeMillis(),
-                                syncStatus = "SINCRONIZADO"
-                            )
+                val remoteShifts = fetchAllPaginated { limit, offset ->
+                    service.getShifts(limit = limit, offset = offset)
+                }
+                if (remoteShifts.isNotEmpty()) {
+                    val entities = remoteShifts.mapNotNull { dto ->
+                        val hasPendingInQueue = database.syncQueueDao().countPendingForEntity(dto.id) > 0
+                        if (hasPendingInQueue) {
+                            // Keep pending local shift untouched until local push completes
+                            return@mapNotNull null
                         }
-                        if (entities.isNotEmpty()) {
-                            database.shiftDao().insertOrUpdateShifts(entities)
-                        }
-                        log("Turnos sincronizados e guardados em cache (${remoteShifts.size} turnos).")
+                        ShiftEntity(
+                            id = dto.id,
+                            hosterId = dto.hosterId,
+                            hosterName = dto.hosterName,
+                            period = dto.period,
+                            openedAt = DateTimeUtils.fromIsoUtc(dto.openedAt),
+                            closedAt = dto.closedAt?.let { DateTimeUtils.fromIsoUtc(it) },
+                            status = dto.status,
+                            deviceCreatedAt = DateTimeUtils.fromIsoUtc(dto.deviceCreatedAt),
+                            syncedAt = System.currentTimeMillis(),
+                            syncStatus = "SINCRONIZADO"
+                        )
                     }
+                    if (entities.isNotEmpty()) {
+                        database.shiftDao().insertOrUpdateShifts(entities)
+                    }
+                    log("Turnos sincronizados e guardados em cache (${remoteShifts.size} turnos).")
                 }
             } catch (e: Exception) {
                 Log.w("SyncManager", "Remote shifts fetch note: ${e.message}")
@@ -367,58 +443,57 @@ class SyncManager(private val context: Context) {
         withContext(Dispatchers.IO) {
             try {
                 val service = SupabaseClient.getService(context)
-                val response = service.getAttendances()
-                if (response.isSuccessful) {
-                    val remoteAttendances = response.body().orEmpty()
-                    if (remoteAttendances.isNotEmpty()) {
-                        var conflictCount = 0
-                        val entities = remoteAttendances.mapNotNull { dto ->
-                            val local = database.attendanceDao().getAttendanceById(dto.id)
-                            val hasPendingInQueue = database.syncQueueDao().countPendingForEntity(dto.id) > 0
-                            val remoteUpdatedAt = DateTimeUtils.fromIsoUtc(dto.updatedAt)
+                val remoteAttendances = fetchAllPaginated { limit, offset ->
+                    service.getAttendances(limit = limit, offset = offset)
+                }
+                if (remoteAttendances.isNotEmpty()) {
+                    var conflictCount = 0
+                    val entities = remoteAttendances.mapNotNull { dto ->
+                        val local = database.attendanceDao().getAttendanceById(dto.id)
+                        val hasPendingInQueue = database.syncQueueDao().countPendingForEntity(dto.id) > 0
+                        val remoteUpdatedAt = DateTimeUtils.fromIsoUtc(dto.updatedAt)
 
-                            if (local != null && hasPendingInQueue) {
-                                // Only report a genuine conflict if remote was edited strictly after local (>2s)
-                                if (remoteUpdatedAt > local.updatedAt + 2_000L) {
-                                    conflictCount++
-                                }
-                                // Preserve pending local changes until queue pushes them
-                                return@mapNotNull null
+                        if (local != null && hasPendingInQueue) {
+                            // Only report a genuine conflict if remote was edited strictly after local (>2s)
+                            if (remoteUpdatedAt > local.updatedAt + 2_000L) {
+                                conflictCount++
                             }
+                            // Preserve pending local changes until queue pushes them
+                            return@mapNotNull null
+                        }
 
-                            AttendanceEntity(
-                                id = dto.id,
-                                shiftId = dto.shiftId,
-                                hosterId = dto.hosterId,
-                                hosterName = dto.hosterName,
-                                type = dto.type,
-                                totalMembers = dto.totalMembers,
-                                newMembers = dto.newMembers,
-                                returningMembers = dto.returningMembers,
-                                createdAt = DateTimeUtils.fromIsoUtc(dto.createdAt),
-                                updatedAt = remoteUpdatedAt,
-                                isEdited = local?.isEdited ?: false,
-                                isPreferential = dto.isPreferential,
-                                isDeleted = dto.isDeleted,
-                                deletedAt = dto.deletedAt?.let { DateTimeUtils.fromIsoUtc(it) },
-                                deletedBy = dto.deletedBy,
-                                deletionReason = dto.deletionReason,
-                                syncStatus = "SINCRONIZADO"
-                            )
-                        }
-                        if (entities.isNotEmpty()) {
-                            database.attendanceDao().insertOrUpdateAttendances(entities)
-                        }
-                        log("Atendimentos sincronizados em cache (${remoteAttendances.size} registros).")
-                        if (conflictCount > 0) {
-                            systemLogRepository?.recordLog(
-                                action = SystemLogActions.CONFLICT_DETECTED,
-                                entityType = "ATTENDANCE",
-                                result = LogResult.FAILURE,
-                                description = "Detectados $conflictCount conflito(s) de sincronização entre alterações locais pendentes e servidor.",
-                                triggerSync = false
-                            )
-                        }
+                        AttendanceEntity(
+                            id = dto.id,
+                            shiftId = dto.shiftId,
+                            hosterId = dto.hosterId,
+                            hosterName = dto.hosterName,
+                            type = dto.type,
+                            totalMembers = dto.totalMembers,
+                            newMembers = dto.newMembers,
+                            returningMembers = dto.returningMembers,
+                            createdAt = DateTimeUtils.fromIsoUtc(dto.createdAt),
+                            updatedAt = remoteUpdatedAt,
+                            isEdited = local?.isEdited ?: false,
+                            isPreferential = dto.isPreferential,
+                            isDeleted = dto.isDeleted,
+                            deletedAt = dto.deletedAt?.let { DateTimeUtils.fromIsoUtc(it) },
+                            deletedBy = dto.deletedBy,
+                            deletionReason = dto.deletionReason,
+                            syncStatus = "SINCRONIZADO"
+                        )
+                    }
+                    if (entities.isNotEmpty()) {
+                        database.attendanceDao().insertOrUpdateAttendances(entities)
+                    }
+                    log("Atendimentos sincronizados em cache (${remoteAttendances.size} registros).")
+                    if (conflictCount > 0) {
+                        systemLogRepository?.recordLog(
+                            action = SystemLogActions.CONFLICT_DETECTED,
+                            entityType = "ATTENDANCE",
+                            result = LogResult.FAILURE,
+                            description = "Detectados $conflictCount conflito(s) de sincronização entre alterações locais pendentes e servidor.",
+                            triggerSync = false
+                        )
                     }
                 }
             } catch (e: Exception) {
@@ -465,23 +540,28 @@ class SyncManager(private val context: Context) {
         withContext(Dispatchers.IO) {
             try {
                 val service = SupabaseClient.getService(context)
-                val response = service.getAttendanceMembers()
-                if (response.isSuccessful) {
-                    val remoteMembers = response.body().orEmpty()
-                    if (remoteMembers.isNotEmpty()) {
-                        val entities = remoteMembers.map { dto ->
-                            AttendanceMemberEntity(
-                                id = dto.id,
-                                attendanceId = dto.attendanceId,
-                                memberNumber = dto.memberNumber,
-                                classification = dto.classification,
-                                origin = dto.origin,
-                                createdAt = DateTimeUtils.fromIsoUtc(dto.createdAt)
-                            )
+                val remoteMembers = fetchAllPaginated { limit, offset ->
+                    service.getAttendanceMembers(limit = limit, offset = offset)
+                }
+                if (remoteMembers.isNotEmpty()) {
+                    val entities = remoteMembers.mapNotNull { dto ->
+                        val hasPendingForAttendance = database.syncQueueDao().countPendingForEntity(dto.attendanceId) > 0
+                        if (hasPendingForAttendance) {
+                            return@mapNotNull null
                         }
-                        database.attendanceMemberDao().insertMembers(entities)
-                        log("Integrantes individuais carregados em cache (${entities.size} pessoas).")
+                        AttendanceMemberEntity(
+                            id = dto.id,
+                            attendanceId = dto.attendanceId,
+                            memberNumber = dto.memberNumber,
+                            classification = dto.classification,
+                            origin = dto.origin,
+                            createdAt = DateTimeUtils.fromIsoUtc(dto.createdAt)
+                        )
                     }
+                    if (entities.isNotEmpty()) {
+                        database.attendanceMemberDao().insertMembers(entities)
+                    }
+                    log("Integrantes individuais carregados em cache (${entities.size} pessoas).")
                 }
             } catch (e: Exception) {
                 Log.w("SyncManager", "Remote members fetch note: ${e.message}")
@@ -494,23 +574,22 @@ class SyncManager(private val context: Context) {
         withContext(Dispatchers.IO) {
             try {
                 val service = SupabaseClient.getService(context)
-                val response = service.getQueueEvents()
-                if (response.isSuccessful) {
-                    val remoteQueue = response.body().orEmpty()
-                    if (remoteQueue.isNotEmpty()) {
-                        val entities = remoteQueue.map { dto ->
-                            QueueEventEntity(
-                                id = dto.id,
-                                shiftId = dto.shiftId,
-                                hosterId = dto.hosterId,
-                                waitingDuos = dto.waitingDuos,
-                                waitingGroups = dto.waitingGroups,
-                                createdAt = DateTimeUtils.fromIsoUtc(dto.createdAt),
-                                syncStatus = "SINCRONIZADO"
-                            )
-                        }
-                        database.queueEventDao().insertQueueEvents(entities)
+                val remoteQueue = fetchAllPaginated { limit, offset ->
+                    service.getQueueEvents(limit = limit, offset = offset)
+                }
+                if (remoteQueue.isNotEmpty()) {
+                    val entities = remoteQueue.map { dto ->
+                        QueueEventEntity(
+                            id = dto.id,
+                            shiftId = dto.shiftId,
+                            hosterId = dto.hosterId,
+                            waitingDuos = dto.waitingDuos,
+                            waitingGroups = dto.waitingGroups,
+                            createdAt = DateTimeUtils.fromIsoUtc(dto.createdAt),
+                            syncStatus = "SINCRONIZADO"
+                        )
                     }
+                    database.queueEventDao().insertQueueEvents(entities)
                 }
             } catch (e: Exception) {
                 Log.w("SyncManager", "Remote queue events note: ${e.message}")
@@ -546,6 +625,13 @@ class SyncManager(private val context: Context) {
     }
 
     suspend fun syncPendingQueue(pullAfter: Boolean = false) {
+        val liveOnline = hasCurrentInternet()
+        if (liveOnline != isOnline) {
+            isOnline = liveOnline
+            if (liveOnline) {
+                realtimeClient.ensureConnected()
+            }
+        }
         if (!isOnline) {
             updatePendingCount()
             _syncState.value = if (_pendingCount.value > 0) SyncState.PENDENTE else SyncState.OFFLINE

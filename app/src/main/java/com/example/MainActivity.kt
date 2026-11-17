@@ -120,16 +120,23 @@ class MainActivity : ComponentActivity() {
                 val lifecycleOwner = LocalLifecycleOwner.current
                 DisposableEffect(lifecycleOwner, currentHoster?.id) {
                     val observer = LifecycleEventObserver { _, event ->
-                        if (event == Lifecycle.Event.ON_RESUME) {
-                            updateMgr.checkVersionPolicy(
-                                isOnline = syncMgr.isOnline,
-                                userId = currentHoster?.id,
-                                userName = currentHoster?.name
-                            )
-                            updateMgr.resumePendingInstallIfPermitted(
-                                userId = currentHoster?.id,
-                                userName = currentHoster?.name
-                            )
+                        when (event) {
+                            Lifecycle.Event.ON_RESUME -> {
+                                syncMgr.onAppForegrounded()
+                                updateMgr.checkVersionPolicy(
+                                    isOnline = syncMgr.isOnline,
+                                    userId = currentHoster?.id,
+                                    userName = currentHoster?.name
+                                )
+                                updateMgr.resumePendingInstallIfPermitted(
+                                    userId = currentHoster?.id,
+                                    userName = currentHoster?.name
+                                )
+                            }
+                            Lifecycle.Event.ON_STOP -> {
+                                syncMgr.onAppBackgrounded()
+                            }
+                            else -> Unit
                         }
                     }
                     lifecycleOwner.lifecycle.addObserver(observer)

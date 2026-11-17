@@ -37,15 +37,26 @@ class SupabaseRealtimeClient(
 
     @Volatile
     private var shouldRun = false
+    @Volatile
+    private var isConnected = false
 
     fun start() {
-        if (shouldRun) return
-        shouldRun = true
-        connect()
+        ensureConnected()
+    }
+
+    fun ensureConnected() {
+        if (!shouldRun) {
+            shouldRun = true
+            connect()
+        } else if (!isConnected) {
+            reconnectJob?.cancel()
+            connect()
+        }
     }
 
     fun stop() {
         shouldRun = false
+        isConnected = false
         heartbeatJob?.cancel()
         reconnectJob?.cancel()
         debounceJob?.cancel()
@@ -62,24 +73,35 @@ class SupabaseRealtimeClient(
             .replace("http://", "ws://") + "/realtime/v1/websocket?apikey=$anonKey&vsn=1.0.0"
 
         val request = Request.Builder().url(wsUrl).build()
-        webSocket?.cancel()
+        val previous = webSocket
+        webSocket = null
+        previous?.cancel()
+        isConnected = false
+
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
+                if (!shouldRun || (webSocket != null && ws !== webSocket)) return
+                isConnected = true
                 Log.i("SupabaseRealtime", "Conectado ao Realtime.")
                 joinPublicChannel(ws, anonKey)
                 startHeartbeat(ws)
             }
 
             override fun onMessage(ws: WebSocket, text: String) {
+                if (!shouldRun || (webSocket != null && ws !== webSocket)) return
                 handleMessage(text)
             }
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+                if (!shouldRun || (webSocket != null && ws !== webSocket)) return
+                isConnected = false
                 Log.w("SupabaseRealtime", "Falha Realtime: ${t.message}")
                 scheduleReconnect()
             }
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
+                if (!shouldRun || (webSocket != null && ws !== webSocket)) return
+                isConnected = false
                 if (shouldRun) {
                     scheduleReconnect()
                 }
@@ -88,7 +110,7 @@ class SupabaseRealtimeClient(
     }
 
     private fun joinPublicChannel(ws: WebSocket, anonKey: String) {
-        val tables = listOf("attendances", "shifts", "queue_events", "system_logs", "app_releases")
+        val tables = listOf("attendances", "attendance_members", "shifts", "queue_events", "hosters", "system_logs", "app_releases")
         val pgChanges = JSONArray()
         for (table in tables) {
             pgChanges.put(
@@ -119,26 +141,33 @@ class SupabaseRealtimeClient(
     private fun startHeartbeat(ws: WebSocket) {
         heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
-            while (isActive && shouldRun) {
+            while (isActive && shouldRun && ws === webSocket) {
                 delay(25_000L)
+                if (!shouldRun || ws !== webSocket) break
                 val hb = JSONObject().apply {
                     put("topic", "phoenix")
                     put("event", "heartbeat")
                     put("payload", JSONObject())
                     put("ref", refCounter.getAndIncrement().toString())
                 }
-                ws.send(hb.toString())
+                val sent = ws.send(hb.toString())
+                if (!sent) {
+                    isConnected = false
+                    scheduleReconnect()
+                    break
+                }
             }
         }
     }
 
     private fun scheduleReconnect() {
         heartbeatJob?.cancel()
+        isConnected = false
         if (!shouldRun) return
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
             delay(5_000L)
-            if (shouldRun) connect()
+            if (shouldRun && !isConnected) connect()
         }
     }
 

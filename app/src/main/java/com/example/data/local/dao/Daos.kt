@@ -132,6 +132,9 @@ interface AttendanceMemberDao {
     @Query("SELECT m.* FROM attendance_members m INNER JOIN attendances a ON m.attendanceId = a.id WHERE a.isDeleted = 0")
     suspend fun getAllMembers(): List<AttendanceMemberEntity>
 
+    @Query("SELECT m.* FROM attendance_members m INNER JOIN attendances a ON m.attendanceId = a.id WHERE a.isDeleted = 0")
+    fun getAllMembersFlow(): Flow<List<AttendanceMemberEntity>>
+
     @Query("SELECT * FROM attendance_members")
     suspend fun getAllMembersIncludingDeleted(): List<AttendanceMemberEntity>
 
